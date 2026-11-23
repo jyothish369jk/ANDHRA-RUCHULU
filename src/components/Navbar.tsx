@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { CalendarCheck, Menu, MoreVertical, ShoppingBag, Sparkles, X } from 'lucide-react';
+import { CalendarCheck, Menu, MoreVertical, ShoppingBag, X } from 'lucide-react';
 import { BrandEmblem } from './InteractivePrimitives';
 
 export type NavSectionId = 'home' | 'menu' | 'story' | 'contact';
@@ -11,7 +11,6 @@ interface NavbarProps {
   bookingsCount: number;
   onNavigate: (section: NavSectionId) => void;
   onOpenCart: () => void;
-  onOpenFutureWidget: () => void;
   onOpenMyBookings: () => void;
 }
 
@@ -28,7 +27,6 @@ export function Navbar({
   bookingsCount,
   onNavigate,
   onOpenCart,
-  onOpenFutureWidget,
   onOpenMyBookings,
 }: NavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -115,20 +113,8 @@ export function Navbar({
             })}
           </nav>
 
-          {/* Zone 3: Cart Trigger, Book a Table CTA, Integration Slot & 3-Dots My Bookings Menu */}
+          {/* Zone 3: Cart Trigger, Book a Table CTA & 3-Dots My Bookings Menu */}
           <div className="flex shrink-0 items-center gap-1.5 sm:gap-2.5">
-            {/* TODO: Mount upcoming AI Sommelier / Concierge integration widget here */}
-            <button
-              id="future-ai-widget-trigger"
-              type="button"
-              onClick={onOpenFutureWidget}
-              title="Pairing & Spice Guide (Integration Slot)"
-              aria-label="Open spice pairing guide integration slot"
-              data-integration-slot="future-ai-widget"
-              className="hidden h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/12 bg-white/[0.03] text-[#94A3B8] transition-colors duration-200 hover:border-[#F59E0B]/40 hover:text-[#F59E0B] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F59E0B] lg:inline-flex"
-            >
-              <Sparkles className="h-4 w-4" aria-hidden="true" />
-            </button>
 
             <button
               type="button"
@@ -295,17 +281,6 @@ export function Navbar({
                       {bookingsCount}
                     </span>
                   )}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setMobileMenuOpen(false);
-                    onOpenFutureWidget();
-                  }}
-                  className="flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-white/12 bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-[#F8FAFC]"
-                >
-                  <Sparkles className="h-4 w-4 text-[#F59E0B]" />
-                  <span>Spice Pairing Guide</span>
                 </button>
                 <button
                   type="button"

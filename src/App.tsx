@@ -15,7 +15,6 @@ import { HeroSection } from './components/HeroSection';
 import { MenuSection } from './components/MenuSection';
 import { MyBookingsModal } from './components/MyBookingsModal';
 import { Navbar, type NavSectionId } from './components/Navbar';
-import { PairingGuideModal } from './components/PairingGuideModal';
 import { StorySection } from './components/StorySection';
 import type {
   CartItem,
@@ -41,7 +40,6 @@ export default function App() {
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
   const [customizingDish, setCustomizingDish] = useState<MenuItem | null>(null);
-  const [pairingGuideOpen, setPairingGuideOpen] = useState(false);
   const [myBookingsOpen, setMyBookingsOpen] = useState(false);
   const [bookings, setBookings] = useState<TableBooking[]>(() => loadMyBookingsFromStorage());
   const [toast, setToast] = useState<ToastState | null>(null);
@@ -202,7 +200,6 @@ export default function App() {
           bookingsCount={bookings.length}
           onNavigate={scrollToSection}
           onOpenCart={() => setCartOpen(true)}
-          onOpenFutureWidget={() => setPairingGuideOpen(true)}
           onOpenMyBookings={openMyBookings}
         />
 
@@ -241,11 +238,6 @@ export default function App() {
           onConfirmAdd={handleConfirmCustomizedAdd}
         />
 
-        <PairingGuideModal
-          isOpen={pairingGuideOpen}
-          onClose={() => setPairingGuideOpen(false)}
-        />
-
         <MyBookingsModal
           isOpen={myBookingsOpen}
           bookings={bookings}
@@ -266,7 +258,7 @@ export default function App() {
               animate={{ opacity: 1, y: 0, scale: 1 }}
               exit={{ opacity: 0, y: 12, scale: 0.96 }}
               transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-              className="glass-panel-elevated fixed right-4 bottom-4 z-50 flex w-[calc(100%-2rem)] max-w-sm items-start gap-3 rounded-2xl p-4 sm:right-6 sm:bottom-6"
+              className="glass-panel-elevated fixed right-4 bottom-5 z-50 flex w-[calc(100%-2rem)] max-w-sm items-start gap-3 rounded-2xl p-4 sm:right-6 sm:bottom-6"
             >
               <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[#10B981]" aria-hidden="true" />
               <div className="min-w-0 flex-1">
