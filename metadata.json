@@ -1,0 +1,6 @@
+{
+  "name": "Andhra Ruchulu",
+  "description": "Luxury contemporary Andhra dining flagship celebrating coastal spice mastery, earthen claypot craft, and modern Indian hospitality.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
