@@ -50,12 +50,22 @@ export interface FlagshipLocation {
   landmarks: Array<{ id: string; label: string; x: number; y: number; distance: string }>;
 }
 
-export interface ReservationDetails {
+export type ReservationOccasion =
+  | 'Birthday'
+  | 'Anniversary'
+  | 'Family Dinner'
+  | 'Casual Dining'
+  | 'Corporate Event'
+  | 'Other';
+
+export interface TableBooking {
+  id: string;
   name: string;
   phone: string;
-  date: string;
-  time: string;
-  guests: string;
-  locationId: 'hyderabad' | 'visakhapatnam';
-  occasion?: string;
+  occasion: ReservationOccasion;
+  guests: number;
+  dateTime: string;
+  bookedAt: string;
+  status: 'Sent via WhatsApp (Awaiting Reply)';
+  locationName?: string;
 }

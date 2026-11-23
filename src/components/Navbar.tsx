@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { Menu, ShoppingBag, Sparkles, X } from 'lucide-react';
+import { CalendarCheck, Menu, MoreVertical, ShoppingBag, Sparkles, X } from 'lucide-react';
 import { BrandEmblem } from './InteractivePrimitives';
 
 export type NavSectionId = 'home' | 'menu' | 'story' | 'contact';
@@ -8,9 +8,11 @@ export type NavSectionId = 'home' | 'menu' | 'story' | 'contact';
 interface NavbarProps {
   activeSection: NavSectionId;
   cartCount: number;
+  bookingsCount: number;
   onNavigate: (section: NavSectionId) => void;
   onOpenCart: () => void;
   onOpenFutureWidget: () => void;
+  onOpenMyBookings: () => void;
 }
 
 const NAV_ITEMS: Array<{ id: NavSectionId; label: string }> = [
@@ -23,21 +25,49 @@ const NAV_ITEMS: Array<{ id: NavSectionId; label: string }> = [
 export function Navbar({
   activeSection,
   cartCount,
+  bookingsCount,
   onNavigate,
   onOpenCart,
   onOpenFutureWidget,
+  onOpenMyBookings,
 }: NavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const moreMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+
+    const handleOutsideClick = (event: MouseEvent) => {
+      if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) {
+        setMoreMenuOpen(false);
+      }
+    };
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMoreMenuOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleOutsideClick);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [moreMenuOpen]);
 
   const handleNavClick = (id: NavSectionId) => {
     setMobileMenuOpen(false);
+    setMoreMenuOpen(false);
     onNavigate(id);
   };
 
   return (
     <>
       <header className="sticky top-3 z-40 mx-auto w-full max-w-6xl px-4 sm:px-6">
-        <div className="glass-panel-elevated flex h-14 items-center justify-between gap-4 rounded-full px-4 sm:h-16 sm:gap-8 sm:px-6">
+        <div className="glass-panel-elevated flex h-14 items-center justify-between gap-3 rounded-full px-4 sm:h-16 sm:gap-6 sm:px-6">
           {/* Zone 1: Single-line Brand Wordmark + Custom SVG Emblem */}
           <a
             href="#home"
@@ -48,7 +78,7 @@ export function Navbar({
             className="flex shrink-0 items-center gap-2.5 whitespace-nowrap focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F59E0B] focus-visible:rounded-full"
           >
             <BrandEmblem className="h-7 w-7 shrink-0" />
-            <span className="font-serif text-base font-semibold tracking-[0.14em] text-[#F8FAFC] uppercase whitespace-nowrap sm:text-lg">
+            <span className="font-serif text-sm font-semibold tracking-[0.12em] text-[#F8FAFC] uppercase whitespace-nowrap sm:text-lg sm:tracking-[0.14em]">
               Andhra Ruchulu
             </span>
           </a>
@@ -85,8 +115,8 @@ export function Navbar({
             })}
           </nav>
 
-          {/* Zone 3: Primary CTA + Cart Trigger + Reserved Future Integration Slot */}
-          <div className="flex shrink-0 items-center gap-2 sm:gap-3">
+          {/* Zone 3: Cart Trigger, Book a Table CTA, Integration Slot & 3-Dots My Bookings Menu */}
+          <div className="flex shrink-0 items-center gap-1.5 sm:gap-2.5">
             {/* TODO: Mount upcoming AI Sommelier / Concierge integration widget here */}
             <button
               id="future-ai-widget-trigger"
@@ -95,7 +125,7 @@ export function Navbar({
               title="Pairing & Spice Guide (Integration Slot)"
               aria-label="Open spice pairing guide integration slot"
               data-integration-slot="future-ai-widget"
-              className="hidden h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/12 bg-white/[0.03] text-[#94A3B8] transition-colors duration-200 hover:border-[#F59E0B]/40 hover:text-[#F59E0B] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F59E0B] sm:inline-flex"
+              className="hidden h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/12 bg-white/[0.03] text-[#94A3B8] transition-colors duration-200 hover:border-[#F59E0B]/40 hover:text-[#F59E0B] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F59E0B] lg:inline-flex"
             >
               <Sparkles className="h-4 w-4" aria-hidden="true" />
             </button>
@@ -104,7 +134,7 @@ export function Navbar({
               type="button"
               onClick={onOpenCart}
               aria-label={`Open order drawer, ${cartCount} items`}
-              className="relative inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-white/12 bg-white/[0.04] px-3 text-xs font-medium text-[#F8FAFC] whitespace-nowrap transition-colors duration-200 hover:border-white/25 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F59E0B]"
+              className="relative inline-flex h-9 shrink-0 cursor-pointer items-center gap-1.5 rounded-full border border-white/12 bg-white/[0.04] px-2.5 text-xs font-medium text-[#F8FAFC] whitespace-nowrap transition-colors duration-200 hover:border-white/25 hover:bg-white/[0.08] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F59E0B] sm:px-3"
             >
               <ShoppingBag className="h-3.5 w-3.5 text-[#F59E0B]" aria-hidden="true" />
               <span className="tabular-nums">{cartCount}</span>
@@ -115,18 +145,75 @@ export function Navbar({
               onClick={() => handleNavClick('contact')}
               className="hidden h-9 shrink-0 cursor-pointer items-center justify-center rounded-full bg-[#F59E0B] px-4 text-xs font-semibold text-[#0B0C10] whitespace-nowrap transition-colors duration-200 hover:bg-[#FBBF24] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F59E0B] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0B0C10] sm:inline-flex"
             >
-              Reserve Table
+              Book a Table
             </button>
 
+            {/* Mobile Hamburger Drawer Trigger */}
             <button
               type="button"
               onClick={() => setMobileMenuOpen((prev) => !prev)}
               aria-label={mobileMenuOpen ? 'Close navigation menu' : 'Open navigation menu'}
               aria-expanded={mobileMenuOpen}
-              className="inline-flex h-10 w-10 shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/12 bg-white/[0.04] text-[#F8FAFC] transition-colors hover:border-white/25 md:hidden"
+              className="inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/12 bg-white/[0.04] text-[#F8FAFC] transition-colors hover:border-white/25 md:hidden"
             >
               {mobileMenuOpen ? <X className="h-4 w-4" /> : <Menu className="h-4 w-4" />}
             </button>
+
+            {/* Vertical 3-Dots Menu (⋮) for Personal My Bookings */}
+            <div ref={moreMenuRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setMoreMenuOpen((prev) => !prev)}
+                aria-label="More options"
+                aria-haspopup="menu"
+                aria-expanded={moreMenuOpen}
+                className="relative inline-flex h-9 w-9 shrink-0 cursor-pointer items-center justify-center rounded-full border border-white/12 bg-white/[0.04] text-[#F8FAFC] transition-colors duration-200 hover:border-[#F59E0B]/45 hover:text-[#F59E0B] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F59E0B]"
+              >
+                <MoreVertical className="h-4 w-4" aria-hidden="true" />
+                {bookingsCount > 0 && (
+                  <span
+                    aria-label={`${bookingsCount} saved reservations`}
+                    className="absolute -top-1 -right-1 flex h-4 min-w-[16px] items-center justify-center rounded-full bg-[#F59E0B] px-1 text-[10px] font-bold text-[#0B0C10] tabular-nums"
+                  >
+                    {bookingsCount}
+                  </span>
+                )}
+              </button>
+
+              <AnimatePresence>
+                {moreMenuOpen && (
+                  <motion.div
+                    role="menu"
+                    aria-label="More navigation actions"
+                    initial={{ opacity: 0, y: 8, scale: 0.95 }}
+                    animate={{ opacity: 1, y: 0, scale: 1 }}
+                    exit={{ opacity: 0, y: 6, scale: 0.95 }}
+                    transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
+                    className="glass-panel-elevated absolute right-0 mt-2.5 w-56 origin-top-right overflow-hidden rounded-2xl p-1.5"
+                  >
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setMoreMenuOpen(false);
+                        onOpenMyBookings();
+                      }}
+                      className="flex min-h-[42px] w-full cursor-pointer items-center justify-between gap-2.5 rounded-xl px-3.5 py-2 text-left text-xs font-medium text-[#F8FAFC] transition-colors hover:bg-white/[0.08] hover:text-[#F59E0B]"
+                    >
+                      <span className="inline-flex items-center gap-2.5">
+                        <CalendarCheck className="h-4 w-4 text-[#F59E0B]" aria-hidden="true" />
+                        <span>My Bookings</span>
+                      </span>
+                      {bookingsCount > 0 && (
+                        <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#F59E0B] px-1.5 text-[11px] font-semibold text-[#0B0C10] tabular-nums">
+                          {bookingsCount}
+                        </span>
+                      )}
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
           </div>
         </div>
       </header>
@@ -195,6 +282,24 @@ export function Navbar({
                   type="button"
                   onClick={() => {
                     setMobileMenuOpen(false);
+                    onOpenMyBookings();
+                  }}
+                  className="flex min-h-[44px] w-full cursor-pointer items-center justify-between rounded-xl border border-white/12 bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-[#F8FAFC]"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <CalendarCheck className="h-4 w-4 text-[#F59E0B]" />
+                    <span>My Bookings</span>
+                  </span>
+                  {bookingsCount > 0 && (
+                    <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full bg-[#F59E0B] px-1.5 text-xs font-semibold text-[#0B0C10] tabular-nums">
+                      {bookingsCount}
+                    </span>
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
                     onOpenFutureWidget();
                   }}
                   className="flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-white/12 bg-white/[0.04] px-4 py-2.5 text-sm font-medium text-[#F8FAFC]"
@@ -207,7 +312,7 @@ export function Navbar({
                   onClick={() => handleNavClick('contact')}
                   className="flex min-h-[44px] w-full cursor-pointer items-center justify-center rounded-xl bg-[#F59E0B] px-4 py-2.5 text-sm font-semibold text-[#0B0C10]"
                 >
-                  Reserve Table
+                  Book a Table
                 </button>
               </div>
             </motion.aside>

@@ -1,18 +1,59 @@
 import React, { useMemo, useRef, useState } from 'react';
 import { motion, useScroll, useTransform } from 'motion/react';
-import { CheckCircle2, Clock, Mail, MapPin, Navigation, Phone, ZoomIn, ZoomOut } from 'lucide-react';
+import {
+  AlertTriangle,
+  CalendarCheck,
+  CheckCircle2,
+  Clock,
+  ExternalLink,
+  Mail,
+  MapPin,
+  MessageCircle,
+  Minus,
+  Navigation,
+  Phone,
+  Plus,
+  ZoomIn,
+  ZoomOut,
+} from 'lucide-react';
 import { FLAGSHIP_LOCATIONS } from '../data/menuData';
-import type { ReservationDetails } from '../types/restaurant';
+import type { ReservationOccasion, TableBooking } from '../types/restaurant';
+import {
+  buildWhatsAppBookingUrl,
+  formatDisplayDateTime,
+  getDefaultBookingDateTime,
+  getMinAdvanceDateTime,
+} from '../utils/reservationsStorage';
 import { MagneticButton } from './InteractivePrimitives';
 
 interface ContactSectionProps {
   onShowToast: (title: string, description: string) => void;
+  onBookingCreated: (booking: TableBooking) => void;
+  onOpenMyBookings: () => void;
 }
 
-const TIME_SLOTS = ['12:30 PM', '1:45 PM', '7:00 PM', '8:15 PM', '9:30 PM'];
-const GUEST_OPTIONS = ['2 Guests', '4 Guests', '6 Guests', '8+ Private Dining'];
+const OCCASION_OPTIONS: ReservationOccasion[] = [
+  'Birthday',
+  'Anniversary',
+  'Family Dinner',
+  'Casual Dining',
+  'Corporate Event',
+  'Other',
+];
 
-export function ContactSection({ onShowToast }: ContactSectionProps) {
+interface FormErrors {
+  name?: string;
+  phone?: string;
+  occasion?: string;
+  guests?: string;
+  dateTime?: string;
+}
+
+export function ContactSection({
+  onShowToast,
+  onBookingCreated,
+  onOpenMyBookings,
+}: ContactSectionProps) {
   const sectionRef = useRef<HTMLElement | null>(null);
   const [selectedCity, setSelectedCity] = useState<'hyderabad' | 'visakhapatnam'>('hyderabad');
   const [selectedLandmarkId, setSelectedLandmarkId] = useState<string>('jubilee');
@@ -24,20 +65,18 @@ export function ContactSection({ onShowToast }: ContactSectionProps) {
   });
   const cardParallaxY = useTransform(scrollYProgress, [0, 0.5], [24, 0]);
 
-  const todayIso = useMemo(() => new Date().toISOString().split('T')[0], []);
+  const [minDateTime, setMinDateTime] = useState<string>(() => getMinAdvanceDateTime());
+  const [name, setName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [occasion, setOccasion] = useState<ReservationOccasion>('Family Dinner');
+  const [guests, setGuests] = useState<number>(2);
+  const [dateTime, setDateTime] = useState<string>(() => getDefaultBookingDateTime());
+  const [formErrors, setFormErrors] = useState<FormErrors>({});
 
-  const [form, setForm] = useState<ReservationDetails>({
-    name: '',
-    phone: '',
-    date: todayIso,
-    time: '8:15 PM',
-    guests: '2 Guests',
-    locationId: 'hyderabad',
-  });
-  const [formErrors, setFormErrors] = useState<Partial<Record<keyof ReservationDetails, string>>>({});
-  const [confirmedReservation, setConfirmedReservation] = useState<
-    (ReservationDetails & { confirmationCode: string }) | null
-  >(null);
+  const [confirmedState, setConfirmedState] = useState<{
+    booking: TableBooking;
+    whatsappUrl: string;
+  } | null>(null);
 
   const activeLocation = useMemo(
     () => FLAGSHIP_LOCATIONS.find((loc) => loc.id === selectedCity) ?? FLAGSHIP_LOCATIONS[0],
@@ -57,36 +96,71 @@ export function ContactSection({ onShowToast }: ContactSectionProps) {
     if (nextLoc) {
       setSelectedLandmarkId(nextLoc.landmarks[0].id);
     }
-    setForm((prev) => ({ ...prev, locationId: cityId }));
   };
 
-  const validateAndSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    const errors: Partial<Record<keyof ReservationDetails, string>> = {};
+  const handleDateTimeFocus = () => {
+    setMinDateTime(getMinAdvanceDateTime());
+  };
 
-    if (!form.name.trim() || form.name.trim().length < 2) {
-      errors.name = 'Please enter your full name.';
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    const freshMinStr = getMinAdvanceDateTime();
+    setMinDateTime(freshMinStr);
+
+    const errors: FormErrors = {};
+
+    if (!name.trim() || name.trim().length < 2) {
+      errors.name = 'Please enter customer name.';
     }
-    const digitsOnly = form.phone.replace(/\D/g, '');
-    if (digitsOnly.length < 10) {
-      errors.phone = 'Enter a valid 10-digit phone number.';
+
+    const cleanDigits = phone.replace(/\D/g, '');
+    if (cleanDigits.length !== 10) {
+      errors.phone = 'Please enter a valid 10-digit phone number.';
     }
-    if (!form.date) {
-      errors.date = 'Select a preferred dining date.';
+
+    if (!occasion) {
+      errors.occasion = 'Please select an occasion.';
+    }
+
+    if (!Number.isFinite(guests) || guests < 1) {
+      errors.guests = 'Minimum 1 guest is required.';
+    }
+
+    if (!dateTime) {
+      errors.dateTime = 'Please select your preferred date and time.';
+    } else {
+      const selectedMs = new Date(dateTime).getTime();
+      const minRequiredMs = Date.now() + 24 * 60 * 60 * 1000;
+      if (Number.isNaN(selectedMs) || selectedMs < minRequiredMs - 60_000) {
+        errors.dateTime = 'Bookings must be made at least 24 hours in advance.';
+      }
     }
 
     setFormErrors(errors);
     if (Object.keys(errors).length > 0) return;
 
-    const code = `AR-${Math.floor(1000 + Math.random() * 9000)}`;
-    const confirmed = { ...form, confirmationCode: code };
-    setConfirmedReservation(confirmed);
+    const newBooking: TableBooking = {
+      id: `AR-${Date.now().toString().slice(-5)}`,
+      name: name.trim(),
+      phone: cleanDigits,
+      occasion,
+      guests,
+      dateTime,
+      bookedAt: new Date().toISOString(),
+      status: 'Sent via WhatsApp (Awaiting Reply)',
+      locationName: activeLocation.neighborhood,
+    };
 
-    const locName =
-      FLAGSHIP_LOCATIONS.find((l) => l.id === form.locationId)?.neighborhood ?? 'Flagship';
+    onBookingCreated(newBooking);
+
+    const whatsappUrl = buildWhatsAppBookingUrl(newBooking);
+    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+
+    setConfirmedState({ booking: newBooking, whatsappUrl });
     onShowToast(
-      `Table Reserved · ${code}`,
-      `${form.guests} confirmed at ${locName} for ${form.date} at ${form.time}.`,
+      'Saved to My Bookings',
+      'Your table request was saved to My Bookings and redirected to WhatsApp.',
     );
   };
 
@@ -108,7 +182,7 @@ export function ContactSection({ onShowToast }: ContactSectionProps) {
           className="text-balance mt-2 font-serif font-semibold tracking-tight text-[#F8FAFC]"
           style={{ fontSize: 'clamp(2.1rem, 3.8vw, 3.3rem)', lineHeight: 1.08 }}
         >
-          Reserve Your Table at the Obsidian Hearth
+          Reserve a Table at the Obsidian Hearth
         </h2>
       </motion.div>
 
@@ -219,7 +293,6 @@ export function ContactSection({ onShowToast }: ContactSectionProps) {
                 role="img"
                 aria-label={`Stylized dark architectural map of ${activeLocation.neighborhood}`}
               >
-                {/* Subtle Urban Grid */}
                 <defs>
                   <pattern id="urbanGrid" width="28" height="28" patternUnits="userSpaceOnUse">
                     <path
@@ -232,7 +305,6 @@ export function ContactSection({ onShowToast }: ContactSectionProps) {
                 </defs>
                 <rect width="400" height="210" fill="url(#urbanGrid)" />
 
-                {/* Architectural Avenues / Coastal Curve */}
                 <path
                   d={
                     selectedCity === 'hyderabad'
@@ -257,7 +329,6 @@ export function ContactSection({ onShowToast }: ContactSectionProps) {
                 />
               </svg>
 
-              {/* Interactive Landmark Pins */}
               {activeLocation.landmarks.map((pin, idx) => {
                 const isActivePin = pin.id === activeLandmark.id;
                 const isPrimary = idx === 0;
@@ -280,7 +351,6 @@ export function ContactSection({ onShowToast }: ContactSectionProps) {
                 );
               })}
 
-              {/* Selected Landmark Detail Footer */}
               <div className="glass-panel absolute inset-x-3 bottom-3 flex items-center justify-between rounded-xl px-3.5 py-2 text-xs">
                 <span className="font-medium text-[#F8FAFC]">{activeLandmark.label}</span>
                 <span className="text-[#F59E0B]">{activeLandmark.distance}</span>
@@ -289,9 +359,9 @@ export function ContactSection({ onShowToast }: ContactSectionProps) {
           </div>
         </div>
 
-        {/* Right Side: Minimalist Table Booking Form */}
+        {/* Right Side: Table Reservation Form with 24h Rule & WhatsApp Integration */}
         <div className="p-6 sm:p-8 lg:col-span-6 lg:p-10">
-          {confirmedReservation ? (
+          {confirmedState ? (
             <motion.div
               initial={{ opacity: 0, scale: 0.97 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -300,191 +370,267 @@ export function ContactSection({ onShowToast }: ContactSectionProps) {
               <div>
                 <div className="inline-flex items-center gap-2 text-sm font-semibold text-[#10B981]">
                   <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
-                  <span>Reservation Confirmed</span>
+                  <span>Saved to My Bookings &amp; Sent to WhatsApp</span>
                 </div>
                 <h3 className="mt-3 font-serif text-3xl font-semibold text-[#F8FAFC]">
-                  We look forward to welcoming you, {confirmedReservation.name}.
+                  Thank you, {confirmedState.booking.name}.
                 </h3>
-                <p className="mt-2 text-sm text-[#94A3B8]">
-                  Your table has been held under reference{' '}
+                <p className="mt-2 text-sm leading-relaxed text-[#94A3B8]">
+                  Reference{' '}
                   <span className="font-semibold text-[#F59E0B] tabular-nums">
-                    {confirmedReservation.confirmationCode}
-                  </span>
-                  .
+                    {confirmedState.booking.id}
+                  </span>{' '}
+                  is saved on your device under{' '}
+                  <span className="text-[#F8FAFC]">My Bookings</span> with status{' '}
+                  <span className="text-[#F8FAFC]">{confirmedState.booking.status}</span>.
                 </p>
 
                 <dl className="mt-6 grid grid-cols-2 gap-4 border-y border-white/10 py-5 text-sm">
                   <div>
-                    <dt className="text-xs text-[#94A3B8]">Flagship</dt>
+                    <dt className="text-xs text-[#94A3B8]">Occasion</dt>
                     <dd className="mt-1 font-medium text-[#F8FAFC]">
-                      {
-                        FLAGSHIP_LOCATIONS.find((l) => l.id === confirmedReservation.locationId)
-                          ?.neighborhood
-                      }
+                      {confirmedState.booking.occasion}
                     </dd>
                   </div>
                   <div>
                     <dt className="text-xs text-[#94A3B8]">Party Size</dt>
                     <dd className="mt-1 font-medium text-[#F8FAFC] tabular-nums">
-                      {confirmedReservation.guests}
+                      {confirmedState.booking.guests} Guest(s)
                     </dd>
                   </div>
-                  <div>
-                    <dt className="text-xs text-[#94A3B8]">Date</dt>
+                  <div className="col-span-2">
+                    <dt className="text-xs text-[#94A3B8]">Preferred Date &amp; Time</dt>
                     <dd className="mt-1 font-medium text-[#F8FAFC] tabular-nums">
-                      {confirmedReservation.date}
-                    </dd>
-                  </div>
-                  <div>
-                    <dt className="text-xs text-[#94A3B8]">Seating Time</dt>
-                    <dd className="mt-1 font-medium text-[#F8FAFC] tabular-nums">
-                      {confirmedReservation.time}
+                      {formatDisplayDateTime(confirmedState.booking.dateTime)}
                     </dd>
                   </div>
                 </dl>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setConfirmedReservation(null)}
-                className="mt-6 min-h-[44px] w-full cursor-pointer rounded-xl border border-white/15 bg-white/[0.04] px-5 py-3 text-sm font-medium text-[#F8FAFC] transition-colors hover:bg-white/[0.08]"
-              >
-                Modify or Book Another Table
-              </button>
+              <div className="mt-6 flex flex-col gap-3">
+                <a
+                  href={confirmedState.whatsappUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-[#10B981] px-5 py-3 text-sm font-semibold text-[#0B0C10] transition-colors hover:bg-[#34D399]"
+                >
+                  <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                  <span>Open WhatsApp Chat</span>
+                  <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                </a>
+
+                <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                  <button
+                    type="button"
+                    onClick={onOpenMyBookings}
+                    className="inline-flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#F59E0B]/40 bg-[#F59E0B]/10 px-4 py-2.5 text-xs font-semibold text-[#F59E0B] transition-colors hover:bg-[#F59E0B]/20"
+                  >
+                    <CalendarCheck className="h-4 w-4" aria-hidden="true" />
+                    <span>View My Bookings</span>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setConfirmedState(null);
+                      setName('');
+                      setPhone('');
+                      setGuests(2);
+                      setDateTime(getDefaultBookingDateTime());
+                    }}
+                    className="min-h-[44px] w-full cursor-pointer rounded-xl border border-white/15 bg-white/[0.04] px-4 py-2.5 text-xs font-medium text-[#F8FAFC] transition-colors hover:bg-white/[0.08]"
+                  >
+                    Book Another Table
+                  </button>
+                </div>
+              </div>
             </motion.div>
           ) : (
-            <form onSubmit={validateAndSubmit} noValidate className="flex h-full flex-col justify-between">
+            <form onSubmit={handleSubmit} noValidate className="flex h-full flex-col justify-between">
               <div>
                 <h3 className="font-serif text-2xl font-semibold text-[#F8FAFC]">
-                  Table Reservation Request
+                  Reserve a Table
                 </h3>
-                <p className="mt-1.5 text-sm text-[#94A3B8]">
-                  Instant table hold for main dining room or chef&apos;s spice bar seating.
+                <p className="mt-1 text-sm text-[#94A3B8]">
+                  Instant WhatsApp dispatch &amp; saved automatically to your My Bookings drawer.
                 </p>
 
-                <div className="mt-7 space-y-5">
-                  <div className="grid grid-cols-1 gap-5 sm:grid-cols-2">
+                <div className="mt-6 space-y-4">
+                  {/* Customer Name & 10-Digit Phone Number */}
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
                       <label htmlFor="res-name" className="block text-xs font-medium text-[#94A3B8]">
-                        Full Name
+                        Customer Name *
                       </label>
                       <input
                         id="res-name"
                         type="text"
                         required
                         placeholder="Ananya Rao"
-                        value={form.name}
+                        value={name}
                         onChange={(e) => {
-                          setForm({ ...form, name: e.target.value });
+                          setName(e.target.value);
                           if (formErrors.name) setFormErrors({ ...formErrors, name: undefined });
                         }}
-                        className="glass-input mt-2 h-11 w-full rounded-xl px-4 text-sm text-[#F8FAFC] placeholder:text-[#94A3B8]/45"
+                        className="glass-input mt-1.5 h-11 w-full rounded-xl px-4 text-sm text-[#F8FAFC] placeholder:text-[#94A3B8]/45"
                       />
                       {formErrors.name && (
-                        <p className="mt-1.5 text-xs text-[#DC2626]">{formErrors.name}</p>
+                        <p className="mt-1 text-xs text-[#DC2626]">{formErrors.name}</p>
                       )}
                     </div>
 
                     <div>
                       <label htmlFor="res-phone" className="block text-xs font-medium text-[#94A3B8]">
-                        Phone Number
+                        Phone Number (10 digits) *
                       </label>
                       <input
                         id="res-phone"
                         type="tel"
+                        inputMode="numeric"
+                        maxLength={10}
                         required
-                        placeholder="+91 98490 00000"
-                        value={form.phone}
+                        placeholder="9849000000"
+                        value={phone}
                         onChange={(e) => {
-                          setForm({ ...form, phone: e.target.value });
+                          const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+                          setPhone(digits);
                           if (formErrors.phone) setFormErrors({ ...formErrors, phone: undefined });
                         }}
-                        className="glass-input mt-2 h-11 w-full rounded-xl px-4 text-sm text-[#F8FAFC] tabular-nums placeholder:text-[#94A3B8]/45"
+                        className="glass-input mt-1.5 h-11 w-full rounded-xl px-4 text-sm text-[#F8FAFC] tabular-nums placeholder:text-[#94A3B8]/45"
                       />
                       {formErrors.phone && (
-                        <p className="mt-1.5 text-xs text-[#DC2626]">{formErrors.phone}</p>
+                        <p className="mt-1 text-xs text-[#DC2626]">{formErrors.phone}</p>
                       )}
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+                  {/* Occasion & Number of Guests */}
+                  <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div>
-                      <label htmlFor="res-date" className="block text-xs font-medium text-[#94A3B8]">
-                        Date
-                      </label>
-                      <input
-                        id="res-date"
-                        type="date"
-                        min={todayIso}
-                        required
-                        value={form.date}
-                        onChange={(e) => setForm({ ...form, date: e.target.value })}
-                        className="glass-input mt-2 h-11 w-full rounded-xl px-3.5 text-sm text-[#F8FAFC] tabular-nums [color-scheme:dark]"
-                      />
-                    </div>
-
-                    <div>
-                      <label htmlFor="res-time" className="block text-xs font-medium text-[#94A3B8]">
-                        Time
+                      <label
+                        htmlFor="res-occasion"
+                        className="block text-xs font-medium text-[#94A3B8]"
+                      >
+                        Occasion *
                       </label>
                       <select
-                        id="res-time"
-                        value={form.time}
-                        onChange={(e) => setForm({ ...form, time: e.target.value })}
-                        className="glass-input mt-2 h-11 w-full rounded-xl bg-[#14110F] px-3.5 text-sm text-[#F8FAFC] tabular-nums"
+                        id="res-occasion"
+                        required
+                        value={occasion}
+                        onChange={(e) => {
+                          setOccasion(e.target.value as ReservationOccasion);
+                          if (formErrors.occasion) {
+                            setFormErrors({ ...formErrors, occasion: undefined });
+                          }
+                        }}
+                        className="glass-input mt-1.5 h-11 w-full rounded-xl bg-[#14110F] px-3.5 text-sm text-[#F8FAFC]"
                       >
-                        {TIME_SLOTS.map((slot) => (
-                          <option key={slot} value={slot} className="bg-[#0B0C10]">
-                            {slot}
+                        {OCCASION_OPTIONS.map((item) => (
+                          <option key={item} value={item} className="bg-[#0B0C10]">
+                            {item}
                           </option>
                         ))}
                       </select>
+                      {formErrors.occasion && (
+                        <p className="mt-1 text-xs text-[#DC2626]">{formErrors.occasion}</p>
+                      )}
                     </div>
 
                     <div>
                       <label htmlFor="res-guests" className="block text-xs font-medium text-[#94A3B8]">
-                        Guest Count
+                        Number of Guests *
                       </label>
-                      <select
-                        id="res-guests"
-                        value={form.guests}
-                        onChange={(e) => setForm({ ...form, guests: e.target.value })}
-                        className="glass-input mt-2 h-11 w-full rounded-xl bg-[#14110F] px-3.5 text-sm text-[#F8FAFC] tabular-nums"
-                      >
-                        {GUEST_OPTIONS.map((count) => (
-                          <option key={count} value={count} className="bg-[#0B0C10]">
-                            {count}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="mt-1.5 flex h-11 items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => setGuests((g) => Math.max(1, g - 1))}
+                          aria-label="Decrease guests"
+                          className="glass-input flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl text-[#F8FAFC] hover:border-[#F59E0B]/50"
+                        >
+                          <Minus className="h-4 w-4" />
+                        </button>
+                        <input
+                          id="res-guests"
+                          type="number"
+                          min={1}
+                          max={40}
+                          required
+                          value={guests}
+                          onChange={(e) => {
+                            const val = parseInt(e.target.value, 10);
+                            setGuests(Number.isNaN(val) ? 1 : Math.max(1, val));
+                            if (formErrors.guests) {
+                              setFormErrors({ ...formErrors, guests: undefined });
+                            }
+                          }}
+                          className="glass-input h-11 w-full rounded-xl px-3 text-center text-sm font-semibold text-[#F8FAFC] tabular-nums"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => setGuests((g) => Math.min(40, g + 1))}
+                          aria-label="Increase guests"
+                          className="glass-input flex h-11 w-11 shrink-0 cursor-pointer items-center justify-center rounded-xl text-[#F8FAFC] hover:border-[#F59E0B]/50"
+                        >
+                          <Plus className="h-4 w-4" />
+                        </button>
+                      </div>
+                      {formErrors.guests && (
+                        <p className="mt-1 text-xs text-[#DC2626]">{formErrors.guests}</p>
+                      )}
                     </div>
                   </div>
 
+                  {/* Preferred Date & Time (datetime-local with 24h min enforcement) */}
                   <div>
-                    <label htmlFor="res-location" className="block text-xs font-medium text-[#94A3B8]">
-                      Dining Room
-                    </label>
-                    <select
-                      id="res-location"
-                      value={form.locationId}
-                      onChange={(e) =>
-                        handleCitySwitch(e.target.value as 'hyderabad' | 'visakhapatnam')
-                      }
-                      className="glass-input mt-2 h-11 w-full rounded-xl bg-[#14110F] px-3.5 text-sm text-[#F8FAFC]"
+                    <label
+                      htmlFor="res-datetime"
+                      className="block text-xs font-medium text-[#94A3B8]"
                     >
-                      {FLAGSHIP_LOCATIONS.map((loc) => (
-                        <option key={loc.id} value={loc.id} className="bg-[#0B0C10]">
-                          {loc.city} — {loc.neighborhood}
-                        </option>
-                      ))}
-                    </select>
+                      Preferred Date &amp; Time *
+                    </label>
+                    <input
+                      id="res-datetime"
+                      type="datetime-local"
+                      required
+                      min={minDateTime}
+                      value={dateTime}
+                      onFocus={handleDateTimeFocus}
+                      onChange={(e) => {
+                        setDateTime(e.target.value);
+                        if (formErrors.dateTime) {
+                          setFormErrors({ ...formErrors, dateTime: undefined });
+                        }
+                      }}
+                      className="glass-input mt-1.5 h-11 w-full rounded-xl px-3.5 text-sm text-[#F8FAFC] tabular-nums [color-scheme:dark]"
+                    />
+                    {formErrors.dateTime && (
+                      <p role="alert" className="mt-1.5 text-xs font-medium text-[#DC2626]">
+                        {formErrors.dateTime}
+                      </p>
+                    )}
                   </div>
                 </div>
               </div>
 
-              <div className="mt-8 pt-2">
+              {/* Prominent 24-Hour Advance Notice Right Above Submit Button */}
+              <div className="mt-6 space-y-4 pt-2">
+                <div
+                  role="note"
+                  className="flex items-start gap-3 rounded-2xl border border-[#F59E0B]/35 bg-[#F59E0B]/[0.08] p-3.5 text-xs leading-relaxed text-[#F8FAFC]"
+                >
+                  <AlertTriangle
+                    className="mt-0.5 h-4 w-4 shrink-0 text-[#F59E0B]"
+                    aria-hidden="true"
+                  />
+                  <p>
+                    ⚠️ Note: Table reservations must be booked at least 24 hours in advance.
+                    Confirmation is subject to restaurant approval via WhatsApp.
+                  </p>
+                </div>
+
                 <MagneticButton type="submit" variant="primary" className="w-full">
-                  Confirm Reservation
+                  <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                  <span>Confirm &amp; Send to WhatsApp</span>
                 </MagneticButton>
               </div>
             </form>

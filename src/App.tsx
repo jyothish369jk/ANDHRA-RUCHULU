@@ -13,10 +13,22 @@ import { CustomizeModal } from './components/CustomizeModal';
 import { Footer } from './components/Footer';
 import { HeroSection } from './components/HeroSection';
 import { MenuSection } from './components/MenuSection';
+import { MyBookingsModal } from './components/MyBookingsModal';
 import { Navbar, type NavSectionId } from './components/Navbar';
 import { PairingGuideModal } from './components/PairingGuideModal';
 import { StorySection } from './components/StorySection';
-import type { CartItem, MenuItem, PortionStyle, SpicePreference } from './types/restaurant';
+import type {
+  CartItem,
+  MenuItem,
+  PortionStyle,
+  SpicePreference,
+  TableBooking,
+} from './types/restaurant';
+import {
+  appendMyBookingToStorage,
+  loadMyBookingsFromStorage,
+  removeMyBookingFromStorage,
+} from './utils/reservationsStorage';
 
 interface ToastState {
   id: number;
@@ -30,6 +42,8 @@ export default function App() {
   const [cartOpen, setCartOpen] = useState(false);
   const [customizingDish, setCustomizingDish] = useState<MenuItem | null>(null);
   const [pairingGuideOpen, setPairingGuideOpen] = useState(false);
+  const [myBookingsOpen, setMyBookingsOpen] = useState(false);
+  const [bookings, setBookings] = useState<TableBooking[]>(() => loadMyBookingsFromStorage());
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
@@ -153,6 +167,21 @@ export default function App() {
     setCartItems((prev) => prev.filter((entry) => entry.cartKey !== cartKey));
   }, []);
 
+  const handleBookingCreated = useCallback((newBooking: TableBooking) => {
+    const updated = appendMyBookingToStorage(newBooking);
+    setBookings(updated);
+  }, []);
+
+  const handleRemoveMyBooking = useCallback((id: string) => {
+    const updated = removeMyBookingFromStorage(id);
+    setBookings(updated);
+  }, []);
+
+  const openMyBookings = useCallback(() => {
+    setBookings(loadMyBookingsFromStorage());
+    setMyBookingsOpen(true);
+  }, []);
+
   const totalItemCount = cartItems.reduce((sum, entry) => sum + entry.quantity, 0);
 
   return (
@@ -170,76 +199,93 @@ export default function App() {
         <Navbar
           activeSection={activeSection}
           cartCount={totalItemCount}
+          bookingsCount={bookings.length}
           onNavigate={scrollToSection}
           onOpenCart={() => setCartOpen(true)}
           onOpenFutureWidget={() => setPairingGuideOpen(true)}
+          onOpenMyBookings={openMyBookings}
         />
 
-      <main>
-        <HeroSection
-          onExploreMenu={() => scrollToSection('menu')}
-          onBookTable={() => scrollToSection('contact')}
+        <main>
+          <HeroSection
+            onExploreMenu={() => scrollToSection('menu')}
+            onBookTable={() => scrollToSection('contact')}
+          />
+          <MenuSection
+            onQuickAdd={handleQuickAdd}
+            onCustomizeItem={(dish) => setCustomizingDish(dish)}
+          />
+          <StorySection />
+          <ContactSection
+            onShowToast={showToast}
+            onBookingCreated={handleBookingCreated}
+            onOpenMyBookings={openMyBookings}
+          />
+        </main>
+
+        <Footer onNavigate={scrollToSection} />
+
+        <CartDrawer
+          isOpen={cartOpen}
+          items={cartItems}
+          onClose={() => setCartOpen(false)}
+          onUpdateQty={handleUpdateQty}
+          onRemoveItem={handleRemoveItem}
+          onClearCart={() => setCartItems([])}
+          onShowToast={showToast}
         />
-        <MenuSection
-          onQuickAdd={handleQuickAdd}
-          onCustomizeItem={(dish) => setCustomizingDish(dish)}
+
+        <CustomizeModal
+          dish={customizingDish}
+          onClose={() => setCustomizingDish(null)}
+          onConfirmAdd={handleConfirmCustomizedAdd}
         />
-        <StorySection />
-        <ContactSection onShowToast={showToast} />
-      </main>
 
-      <Footer onNavigate={scrollToSection} />
+        <PairingGuideModal
+          isOpen={pairingGuideOpen}
+          onClose={() => setPairingGuideOpen(false)}
+        />
 
-      <CartDrawer
-        isOpen={cartOpen}
-        items={cartItems}
-        onClose={() => setCartOpen(false)}
-        onUpdateQty={handleUpdateQty}
-        onRemoveItem={handleRemoveItem}
-        onClearCart={() => setCartItems([])}
-        onShowToast={showToast}
-      />
+        <MyBookingsModal
+          isOpen={myBookingsOpen}
+          bookings={bookings}
+          onClose={() => setMyBookingsOpen(false)}
+          onReserveNow={() => scrollToSection('contact')}
+          onRemoveBooking={handleRemoveMyBooking}
+          onShowToast={showToast}
+        />
 
-      <CustomizeModal
-        dish={customizingDish}
-        onClose={() => setCustomizingDish(null)}
-        onConfirmAdd={handleConfirmCustomizedAdd}
-      />
-
-      <PairingGuideModal
-        isOpen={pairingGuideOpen}
-        onClose={() => setPairingGuideOpen(false)}
-      />
-
-      {/* Interactive Toast Notification */}
-      <AnimatePresence>
-        {toast && (
-          <motion.div
-            key={toast.id}
-            role="status"
-            aria-live="polite"
-            initial={{ opacity: 0, y: 20, scale: 0.96 }}
-            animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.96 }}
-            transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
-            className="glass-panel-elevated fixed right-4 bottom-4 z-50 flex w-[calc(100%-2rem)] max-w-sm items-start gap-3 rounded-2xl p-4 sm:right-6 sm:bottom-6"
-          >
-            <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[#10B981]" aria-hidden="true" />
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-semibold text-[#F8FAFC]">{toast.title}</p>
-              <p className="mt-0.5 text-xs leading-relaxed text-[#94A3B8]">{toast.description}</p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setToast(null)}
-              aria-label="Dismiss notification"
-              className="cursor-pointer text-[#94A3B8] hover:text-[#F8FAFC]"
+        {/* Interactive Toast Notification */}
+        <AnimatePresence>
+          {toast && (
+            <motion.div
+              key={toast.id}
+              role="status"
+              aria-live="polite"
+              initial={{ opacity: 0, y: 20, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 12, scale: 0.96 }}
+              transition={{ duration: 0.25, ease: [0.16, 1, 0.3, 1] }}
+              className="glass-panel-elevated fixed right-4 bottom-4 z-50 flex w-[calc(100%-2rem)] max-w-sm items-start gap-3 rounded-2xl p-4 sm:right-6 sm:bottom-6"
             >
-              <X className="h-4 w-4" />
-            </button>
-          </motion.div>
-        )}
-      </AnimatePresence>
+              <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-[#10B981]" aria-hidden="true" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-semibold text-[#F8FAFC]">{toast.title}</p>
+                <p className="mt-0.5 text-xs leading-relaxed text-[#94A3B8]">
+                  {toast.description}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setToast(null)}
+                aria-label="Dismiss notification"
+                className="cursor-pointer text-[#94A3B8] hover:text-[#F8FAFC]"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
     </MotionConfig>
   );
