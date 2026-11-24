@@ -21,13 +21,17 @@ if (!ORDERS_FILE.startsWith(DATA_DIR + path.sep)) {
   throw new Error('Invalid orders storage path configuration.');
 }
 
-const SESSION_SECRET =
-  process.env.ADMIN_SESSION_SECRET || crypto.randomBytes(32).toString('hex');
-const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
-
 const DEFAULT_PIN_SALT = 'ar_owner_v1_salt_9381';
 const DEFAULT_PIN_HASH =
   '17a22e7817f711880c3081b35e64a7c52a7ed414128a36805a493cd1be0e1969';
+
+const SESSION_SECRET =
+  process.env.ADMIN_SESSION_SECRET ||
+  crypto
+    .createHash('sha256')
+    .update(`${DEFAULT_PIN_HASH}:ar_admin_session_secret_v1`)
+    .digest('hex');
+const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 
 const CANONICAL_MENU_PRICES: Record<string, { name: string; priceInr: number }> = {
   'kodi-vepudu': { name: 'Guntur Kodi Vepudu', priceInr: 540 },
@@ -113,20 +117,22 @@ function normalizePhoneInput(raw: string): string {
 
 const AUTHORIZED_OWNER_EMAIL = 'jyothish369k@gmail.com';
 
-function isAuthorizedOwnerPin(rawPin: string): boolean {
-  const cleanPin = rawPin.trim();
+function isAuthorizedOwnerPin(rawPin: unknown): boolean {
+  const cleanPin = String(rawPin ?? '').trim();
   if (!/^\d{4}$/.test(cleanPin)) {
     return false;
   }
 
-  const configuredPin = process.env.OWNER_PIN?.trim() || '';
+  const configuredPin = String(process.env.OWNER_PIN ?? '').trim();
   if (/^\d{4}$/.test(configuredPin)) {
     const submittedDigest = crypto.createHash('sha256').update(cleanPin).digest();
     const expectedDigest = crypto
       .createHash('sha256')
       .update(configuredPin)
       .digest();
-    return crypto.timingSafeEqual(submittedDigest, expectedDigest);
+    if (crypto.timingSafeEqual(submittedDigest, expectedDigest)) {
+      return true;
+    }
   }
 
   const derived = crypto.scryptSync(cleanPin, DEFAULT_PIN_SALT, 32);
@@ -396,44 +402,45 @@ async function startServer(): Promise<void> {
     });
   });
 
-  // PIN-only Owner Portal authentication
+  // Passkey-only Admin Portal authentication
   app.post('/api/admin/login', (req: Request, res: Response) => {
     const clientIp = req.ip || 'unknown';
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const normalizedPasskey = String(body.pin ?? body.passkey ?? '').trim();
+
+    // Never lock out a valid passkey submission due to prior failed attempts on shared IPs
+    if (isAuthorizedOwnerPin(normalizedPasskey)) {
+      clearLoginAttempts(clientIp);
+      const now = Date.now();
+
+      const token = signToken({
+        sub: 'owner',
+        email: AUTHORIZED_OWNER_EMAIL,
+        jti: crypto.randomUUID(),
+        iat: now,
+        exp: now + SESSION_TTL_MS,
+      });
+
+      res.status(200).json({
+        token,
+        expiresAt: now + SESSION_TTL_MS,
+        owner: {
+          email: AUTHORIZED_OWNER_EMAIL,
+        },
+      });
+      return;
+    }
+
     if (!checkLoginRateLimit(clientIp)) {
       res.status(429).json({
-        error: 'Too many failed login attempts. Please wait 15 minutes.',
+        error: 'Too many incorrect passkey attempts. Wait a moment or enter the valid passkey.',
       });
       return;
     }
 
-    const body = req.body as Record<string, unknown>;
-    const pin = typeof body.pin === 'string' ? body.pin : '';
-
-    if (!isAuthorizedOwnerPin(pin)) {
-      recordFailedLoginAttempt(clientIp);
-      res.status(401).json({
-        error: 'Unauthorized Access: Invalid security PIN',
-      });
-      return;
-    }
-
-    clearLoginAttempts(clientIp);
-    const now = Date.now();
-
-    const token = signToken({
-      sub: 'owner',
-      email: AUTHORIZED_OWNER_EMAIL,
-      jti: crypto.randomUUID(),
-      iat: now,
-      exp: now + SESSION_TTL_MS,
-    });
-
-    res.status(200).json({
-      token,
-      expiresAt: now + SESSION_TTL_MS,
-      owner: {
-        email: AUTHORIZED_OWNER_EMAIL,
-      },
+    recordFailedLoginAttempt(clientIp);
+    res.status(401).json({
+      error: 'Incorrect passkey. Please enter the valid 4-digit passkey.',
     });
   });
 

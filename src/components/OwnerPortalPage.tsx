@@ -23,6 +23,7 @@ import type { CustomerOrder, OrderStatus } from '../types/restaurant';
 import { BrandEmblem } from './InteractivePrimitives';
 
 const OWNER_SESSION_KEY = 'ar_owner_session_token';
+const ADMIN_AUTH_FLAG_KEY = 'isAdminAuthenticated';
 const AUTHORIZED_OWNER_EMAIL = 'jyothish369k@gmail.com';
 
 const ORDER_STATUS_OPTIONS: OrderStatus[] = [
@@ -74,7 +75,9 @@ export function OwnerPortalPage({
 }: OwnerPortalPageProps) {
   const [sessionToken, setSessionToken] = useState<string | null>(() => {
     try {
-      return window.sessionStorage.getItem(OWNER_SESSION_KEY);
+      const token = window.sessionStorage.getItem(OWNER_SESSION_KEY);
+      const isAuthed = window.sessionStorage.getItem(ADMIN_AUTH_FLAG_KEY) === 'true';
+      return token && (isAuthed || token.length > 0) ? token : null;
     } catch {
       return null;
     }
@@ -89,7 +92,7 @@ export function OwnerPortalPage({
 
   const [verifiedEmail, setVerifiedEmail] = useState<string | null>(null);
 
-  // PIN-Only Login Form State
+  // Passkey Login Form State
   const [pinInput, setPinInput] = useState('');
   const [showPin, setShowPin] = useState(false);
   const [loginError, setLoginError] = useState<string | null>(null);
@@ -110,6 +113,7 @@ export function OwnerPortalPage({
   const clearSession = useCallback(() => {
     try {
       window.sessionStorage.removeItem(OWNER_SESSION_KEY);
+      window.sessionStorage.removeItem(ADMIN_AUTH_FLAG_KEY);
     } catch {
       // Ignore storage failures
     }
@@ -186,6 +190,11 @@ export function OwnerPortalPage({
         ) {
           clearSession();
         } else {
+          try {
+            window.sessionStorage.setItem(ADMIN_AUTH_FLAG_KEY, 'true');
+          } catch {
+            // Ignore storage failures
+          }
           setVerifiedEmail(AUTHORIZED_OWNER_EMAIL);
           await fetchOwnerOrders(sessionToken, true);
         }
@@ -206,9 +215,10 @@ export function OwnerPortalPage({
     if (isLoggingIn) return;
 
     setLoginError(null);
+    const normalizedPasskey = String(pinInput ?? '').trim();
 
-    if (!/^\d{4}$/.test(pinInput.trim())) {
-      setLoginError('Please enter your 4-digit security PIN.');
+    if (!normalizedPasskey) {
+      setLoginError('Please enter your 4-digit admin passkey.');
       return;
     }
 
@@ -218,13 +228,13 @@ export function OwnerPortalPage({
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          pin: pinInput.trim(),
+          pin: normalizedPasskey,
         }),
       });
 
       const contentType = response.headers.get('content-type') || '';
       if (!contentType.includes('application/json')) {
-        setLoginError('Unauthorized Access: Invalid security PIN');
+        setLoginError('Unable to verify passkey right now. Please try again.');
         return;
       }
 
@@ -239,13 +249,14 @@ export function OwnerPortalPage({
         data.owner?.email?.trim().toLowerCase() !== AUTHORIZED_OWNER_EMAIL
       ) {
         setLoginError(
-          data.error || 'Unauthorized Access: Invalid security PIN',
+          data.error || 'Incorrect passkey. Please enter the valid 4-digit passkey.',
         );
         return;
       }
 
       try {
         window.sessionStorage.setItem(OWNER_SESSION_KEY, data.token);
+        window.sessionStorage.setItem(ADMIN_AUTH_FLAG_KEY, 'true');
       } catch {
         // Fallback to in-memory token if sessionStorage blocked
       }
@@ -411,13 +422,15 @@ export function OwnerPortalPage({
                     id="owner-pin"
                     type={showPin ? 'text' : 'password'}
                     inputMode="numeric"
-                    maxLength={4}
                     autoFocus
                     autoComplete="off"
                     required
                     value={pinInput}
                     onChange={(e) => {
-                      setPinInput(e.target.value.replace(/\D/g, '').slice(0, 4));
+                      const sanitized = String(e.target.value ?? '')
+                        .replace(/\D/g, '')
+                        .slice(0, 4);
+                      setPinInput(sanitized);
                       if (loginError) setLoginError(null);
                     }}
                     placeholder="••••"
