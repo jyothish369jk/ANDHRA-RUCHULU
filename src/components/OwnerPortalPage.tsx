@@ -3,6 +3,7 @@ import { motion } from 'motion/react';
 import {
   AlertCircle,
   ArrowLeft,
+  BarChart3,
   Clock,
   Eye,
   EyeOff,
@@ -20,6 +21,7 @@ import {
   Store,
 } from 'lucide-react';
 import type { CustomerOrder, OrderStatus } from '../types/restaurant';
+import { AggregatorAnalyticsTab } from './AggregatorAnalyticsTab';
 import { BrandEmblem } from './InteractivePrimitives';
 
 const OWNER_SESSION_KEY = 'ar_owner_session_token';
@@ -99,6 +101,9 @@ export function OwnerPortalPage({
   const [isLoggingIn, setIsLoggingIn] = useState(false);
 
   // Authenticated Dashboard State
+  const [activeAdminTab, setActiveAdminTab] = useState<'orders' | 'analytics'>(
+    'orders',
+  );
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
   const [summary, setSummary] = useState<OrdersSummary>({
     totalOrders: 0,
@@ -531,18 +536,65 @@ export function OwnerPortalPage({
           </div>
         </header>
 
-        {/* Summary Metrics Cards */}
-        <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
-          <div className="glass-panel rounded-2xl p-5">
-            <div className="flex items-center justify-between text-xs text-[#94A3B8]">
-              <span>Total Orders</span>
-              <Package className="h-4 w-4 text-[#F59E0B]" aria-hidden="true" />
-            </div>
-            <p className="mt-2 font-serif text-4xl font-semibold text-[#F8FAFC] tabular-nums">
-              {summary.totalOrders}
-            </p>
-            <p className="mt-1 text-xs text-[#94A3B8]">All-time storefront orders</p>
+        {/* Admin Portal Sub-Navigation Tabs (Hidden from public & pre-login) */}
+        <div className="mt-5 flex flex-wrap items-center gap-2">
+          <div
+            role="tablist"
+            aria-label="Admin Portal sections"
+            className="inline-flex flex-wrap items-center gap-1 rounded-2xl border border-white/12 bg-white/[0.04] p-1.5"
+          >
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeAdminTab === 'orders'}
+              onClick={() => setActiveAdminTab('orders')}
+              className={`inline-flex min-h-[38px] cursor-pointer items-center gap-2 rounded-xl px-4 py-1.5 text-xs font-semibold transition-colors ${
+                activeAdminTab === 'orders'
+                  ? 'bg-[#F59E0B] text-[#0B0C10]'
+                  : 'text-[#94A3B8] hover:text-[#F8FAFC]'
+              }`}
+            >
+              <Package className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Customer Orders</span>
+            </button>
+
+            <button
+              type="button"
+              role="tab"
+              aria-selected={activeAdminTab === 'analytics'}
+              onClick={() => setActiveAdminTab('analytics')}
+              className={`inline-flex min-h-[38px] cursor-pointer items-center gap-2 rounded-xl px-4 py-1.5 text-xs font-semibold transition-colors ${
+                activeAdminTab === 'analytics'
+                  ? 'bg-[#F8FAFC] text-[#0B0C10]'
+                  : 'text-[#94A3B8] hover:text-[#F8FAFC]'
+              }`}
+            >
+              <BarChart3 className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Zomato &amp; Swiggy Analytics</span>
+            </button>
           </div>
+        </div>
+
+        {activeAdminTab === 'analytics' ? (
+          <AggregatorAnalyticsTab
+            sessionToken={sessionToken}
+            onUnauthorized={clearSession}
+            onShowToast={onShowToast}
+          />
+        ) : (
+          <>
+            {/* Summary Metrics Cards */}
+            <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-3">
+              <div className="glass-panel rounded-2xl p-5">
+                <div className="flex items-center justify-between text-xs text-[#94A3B8]">
+                  <span>Total Orders</span>
+                  <Package className="h-4 w-4 text-[#F59E0B]" aria-hidden="true" />
+                </div>
+                <p className="mt-2 font-serif text-4xl font-semibold text-[#F8FAFC] tabular-nums">
+                  {summary.totalOrders}
+                </p>
+                <p className="mt-1 text-xs text-[#94A3B8]">All-time storefront orders</p>
+              </div>
 
           <div className="glass-panel rounded-2xl p-5">
             <div className="flex items-center justify-between text-xs text-[#94A3B8]">
@@ -768,6 +820,8 @@ export function OwnerPortalPage({
             </div>
           )}
         </div>
+          </>
+        )}
       </div>
     </div>
   );

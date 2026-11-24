@@ -5,6 +5,9 @@ import path from 'node:path';
 import express from 'express';
 import type { NextFunction, Request, Response } from 'express';
 import type {
+  AggregatorAnalyticsEntry,
+  AggregatorEntrySource,
+  AggregatorPlatform,
   CustomerOrder,
   OrderFulfillmentType,
   OrderLineItem,
@@ -12,12 +15,17 @@ import type {
   PortionStyle,
   SpicePreference,
 } from './src/types/restaurant.ts';
+import { buildSeededAggregatorEntries } from './src/services/dataService.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.resolve(process.cwd(), '.data');
 const ORDERS_FILE = path.resolve(DATA_DIR, 'orders.json');
+const AGGREGATORS_FILE = path.resolve(DATA_DIR, 'aggregator-analytics.json');
 
-if (!ORDERS_FILE.startsWith(DATA_DIR + path.sep)) {
+if (
+  !ORDERS_FILE.startsWith(DATA_DIR + path.sep) ||
+  !AGGREGATORS_FILE.startsWith(DATA_DIR + path.sep)
+) {
   throw new Error('Invalid orders storage path configuration.');
 }
 
@@ -109,6 +117,99 @@ async function writeOrdersToDisk(orders: CustomerOrder[]): Promise<void> {
   }
   await fs.writeFile(tempFile, JSON.stringify(orders, null, 2), 'utf8');
   await fs.rename(tempFile, ORDERS_FILE);
+}
+
+async function readAggregatorsFromDisk(): Promise<AggregatorAnalyticsEntry[]> {
+  try {
+    const raw = await fs.readFile(AGGREGATORS_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      return parsed as AggregatorAnalyticsEntry[];
+    }
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code !== 'ENOENT') {
+      throw err;
+    }
+  }
+  const seeded = buildSeededAggregatorEntries();
+  await writeAggregatorsToDisk(seeded);
+  return seeded;
+}
+
+async function writeAggregatorsToDisk(
+  entries: AggregatorAnalyticsEntry[],
+): Promise<void> {
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  const tempFile = path.resolve(
+    DATA_DIR,
+    `aggregators.${process.pid}.${Date.now()}.tmp`,
+  );
+  if (!tempFile.startsWith(DATA_DIR + path.sep)) {
+    throw new Error('Invalid temporary aggregator file path.');
+  }
+  await fs.writeFile(tempFile, JSON.stringify(entries, null, 2), 'utf8');
+  await fs.rename(tempFile, AGGREGATORS_FILE);
+}
+
+function sanitizeAggregatorInput(
+  raw: Record<string, unknown>,
+  fallbackSource: AggregatorEntrySource = 'Manual',
+): {
+  platform: AggregatorPlatform;
+  date: string;
+  orders: number;
+  grossSalesInr: number;
+  deductionsInr: number;
+  netPayoutInr: number;
+  source: AggregatorEntrySource;
+  notes?: string;
+} | null {
+  const platform: AggregatorPlatform | null =
+    raw.platform === 'Zomato' || raw.platform === 'Swiggy'
+      ? raw.platform
+      : null;
+  const date = typeof raw.date === 'string' ? raw.date.trim() : '';
+  const orders = Number(raw.orders);
+  const grossSalesInr = Number(raw.grossSalesInr);
+  const deductionsInr = Number(raw.deductionsInr ?? 0);
+
+  if (
+    !platform ||
+    !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+    !Number.isFinite(orders) ||
+    orders < 0 ||
+    orders > 100000 ||
+    !Number.isFinite(grossSalesInr) ||
+    grossSalesInr < 0 ||
+    !Number.isFinite(deductionsInr) ||
+    deductionsInr < 0
+  ) {
+    return null;
+  }
+
+  const roundedOrders = Math.round(orders);
+  const roundedGross = Math.round(grossSalesInr);
+  const roundedDeductions = Math.round(deductionsInr);
+  const source: AggregatorEntrySource =
+    raw.source === 'CSV' || raw.source === 'Seeded' || raw.source === 'Manual'
+      ? raw.source
+      : fallbackSource;
+  const notes =
+    typeof raw.notes === 'string'
+      ? raw.notes.trim().slice(0, 160) || undefined
+      : undefined;
+
+  return {
+    platform,
+    date,
+    orders: roundedOrders,
+    grossSalesInr: roundedGross,
+    deductionsInr: roundedDeductions,
+    netPayoutInr: roundedGross - roundedDeductions,
+    source,
+    notes,
+  };
 }
 
 function normalizePhoneInput(raw: string): string {
@@ -540,6 +641,178 @@ async function startServer(): Promise<void> {
       } catch (error) {
         console.error('Failed to update order status:', error);
         res.status(500).json({ error: 'Unable to update order status.' });
+      }
+    },
+  );
+
+  // Protected Admin-Only Zomato & Swiggy Analytics routes (never accessible publicly)
+  app.get(
+    '/api/admin/aggregators',
+    requireOwnerAuth,
+    async (_req: Request, res: Response) => {
+      try {
+        const entries = await runSerialized(() => readAggregatorsFromDisk());
+        const sorted = [...entries].sort((a, b) =>
+          b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt),
+        );
+        res.status(200).json({ entries: sorted });
+      } catch (error) {
+        console.error('Failed to read aggregator entries:', error);
+        res.status(500).json({ error: 'Unable to load aggregator analytics.' });
+      }
+    },
+  );
+
+  app.post(
+    '/api/admin/aggregators',
+    requireOwnerAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const validated = sanitizeAggregatorInput(
+          (req.body ?? {}) as Record<string, unknown>,
+          'Manual',
+        );
+        if (!validated) {
+          res.status(400).json({ error: 'Invalid aggregator log entry.' });
+          return;
+        }
+        const nowIso = new Date().toISOString();
+        const created: AggregatorAnalyticsEntry = {
+          id: `agg-${Date.now().toString(36)}-${crypto.randomInt(100, 999)}`,
+          ...validated,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+        await runSerialized(async () => {
+          const existing = await readAggregatorsFromDisk();
+          existing.unshift(created);
+          await writeAggregatorsToDisk(existing);
+        });
+        res.status(201).json({ entry: created });
+      } catch (error) {
+        console.error('Failed to create aggregator entry:', error);
+        res.status(500).json({ error: 'Unable to save aggregator entry.' });
+      }
+    },
+  );
+
+  app.post(
+    '/api/admin/aggregators/import',
+    requireOwnerAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const body = (req.body ?? {}) as Record<string, unknown>;
+        const rawList = Array.isArray(body.entries) ? body.entries : [];
+        if (rawList.length === 0 || rawList.length > 500) {
+          res
+            .status(400)
+            .json({ error: 'Import must include between 1 and 500 rows.' });
+          return;
+        }
+        const nowIso = new Date().toISOString();
+        const createdEntries: AggregatorAnalyticsEntry[] = [];
+        for (const item of rawList) {
+          if (!item || typeof item !== 'object') {
+            res.status(400).json({ error: 'Invalid row in CSV import.' });
+            return;
+          }
+          const validated = sanitizeAggregatorInput(
+            item as Record<string, unknown>,
+            'CSV',
+          );
+          if (!validated) {
+            res.status(400).json({ error: 'Invalid row values in CSV import.' });
+            return;
+          }
+          createdEntries.push({
+            id: `csv-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 6)}`,
+            ...validated,
+            source: 'CSV',
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          });
+        }
+
+        await runSerialized(async () => {
+          const existing = await readAggregatorsFromDisk();
+          const merged = [...createdEntries, ...existing];
+          await writeAggregatorsToDisk(merged);
+        });
+
+        res.status(201).json({ entries: createdEntries });
+      } catch (error) {
+        console.error('Failed to import CSV entries:', error);
+        res.status(500).json({ error: 'Unable to import CSV entries.' });
+      }
+    },
+  );
+
+  app.patch(
+    '/api/admin/aggregators/:id',
+    requireOwnerAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const entryId = String(req.params.id || '').trim();
+        const validated = sanitizeAggregatorInput(
+          (req.body ?? {}) as Record<string, unknown>,
+          'Manual',
+        );
+        if (!entryId || !validated) {
+          res.status(400).json({ error: 'Invalid aggregator update.' });
+          return;
+        }
+        let updatedEntry: AggregatorAnalyticsEntry | null = null;
+        await runSerialized(async () => {
+          const existing = await readAggregatorsFromDisk();
+          const idx = existing.findIndex((item) => item.id === entryId);
+          if (idx === -1) return;
+          existing[idx] = {
+            ...existing[idx],
+            ...validated,
+            updatedAt: new Date().toISOString(),
+          };
+          updatedEntry = existing[idx];
+          await writeAggregatorsToDisk(existing);
+        });
+        if (!updatedEntry) {
+          res.status(404).json({ error: 'Entry not found.' });
+          return;
+        }
+        res.status(200).json({ entry: updatedEntry });
+      } catch (error) {
+        console.error('Failed to update aggregator entry:', error);
+        res.status(500).json({ error: 'Unable to update entry.' });
+      }
+    },
+  );
+
+  app.delete(
+    '/api/admin/aggregators/:id',
+    requireOwnerAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const entryId = String(req.params.id || '').trim();
+        if (!entryId) {
+          res.status(400).json({ error: 'Missing entry id.' });
+          return;
+        }
+        let deleted = false;
+        await runSerialized(async () => {
+          const existing = await readAggregatorsFromDisk();
+          const filtered = existing.filter((item) => item.id !== entryId);
+          if (filtered.length !== existing.length) {
+            deleted = true;
+            await writeAggregatorsToDisk(filtered);
+          }
+        });
+        if (!deleted) {
+          res.status(404).json({ error: 'Entry not found.' });
+          return;
+        }
+        res.status(200).json({ ok: true });
+      } catch (error) {
+        console.error('Failed to delete aggregator entry:', error);
+        res.status(500).json({ error: 'Unable to delete entry.' });
       }
     },
   );

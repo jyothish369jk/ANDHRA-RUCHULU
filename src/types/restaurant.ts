@@ -104,3 +104,32 @@ export interface CustomerOrder {
   createdAt: string;
   updatedAt: string;
 }
+
+export type AggregatorPlatform = 'Zomato' | 'Swiggy';
+
+export type AggregatorEntrySource = 'Seeded' | 'Manual' | 'CSV';
+
+export interface AggregatorAnalyticsEntry {
+  id: string;
+  platform: AggregatorPlatform;
+  date: string;
+  orders: number;
+  grossSalesInr: number;
+  deductionsInr: number;
+  netPayoutInr: number;
+  source: AggregatorEntrySource;
+  notes?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AggregatorEntryInput {
+  platform: AggregatorPlatform;
+  date: string;
+  orders: number;
+  grossSalesInr: number;
+  deductionsInr: number;
+  source?: AggregatorEntrySource;
+  notes?: string;
+}
+
