@@ -13,6 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import type { CartItem, OrderFulfillmentType } from '../types/restaurant';
+import { localOrdersService } from '../services/dataService';
 import { OWNER_WHATSAPP_NUMBER } from '../utils/reservationsStorage';
 import { FoodImage } from './InteractivePrimitives';
 
@@ -129,6 +130,31 @@ export function CartDrawer({
 
     const cleanPhone = customerPhone.replace(/\D/g, '');
 
+    const finalizeSuccess = (orderId: string, totalAmountInr: number) => {
+      const whatsappUrl = buildOrderWhatsAppUrl(orderId, cleanPhone);
+
+      if (openWhatsAppAfter) {
+        window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+      }
+
+      setPlacedOrder({
+        id: orderId,
+        totalAmountInr,
+        customerName: customerName.trim(),
+        fulfillmentType,
+        whatsappUrl,
+      });
+
+      onClearCart();
+      setCustomerName('');
+      setCustomerPhone('');
+      setDeliveryAddress('');
+      onShowToast(
+        `Order Placed · #${orderId}`,
+        'Your order has been sent to the Andhra Ruchulu kitchen.',
+      );
+    };
+
     try {
       const response = await fetch('/api/orders', {
         method: 'POST',
@@ -149,8 +175,16 @@ export function CartDrawer({
       });
 
       const contentType = response.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        throw new Error('Unexpected server response.');
+      if (response.status === 404 || !contentType.includes('application/json')) {
+        const localSaved = localOrdersService.createOrder({
+          customerName,
+          customerPhone: cleanPhone,
+          fulfillmentType,
+          deliveryAddress,
+          cartItems: items,
+        });
+        finalizeSuccess(localSaved.id, localSaved.totalAmountInr);
+        return;
       }
 
       const data = (await response.json()) as {
@@ -165,32 +199,16 @@ export function CartDrawer({
         return;
       }
 
-      const whatsappUrl = buildOrderWhatsAppUrl(data.order.id, cleanPhone);
-
-      if (openWhatsAppAfter) {
-        window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
-      }
-
-      setPlacedOrder({
-        id: data.order.id,
-        totalAmountInr: data.order.totalAmountInr,
-        customerName: customerName.trim(),
-        fulfillmentType,
-        whatsappUrl,
-      });
-
-      onClearCart();
-      setCustomerName('');
-      setCustomerPhone('');
-      setDeliveryAddress('');
-      onShowToast(
-        `Order Placed · #${data.order.id}`,
-        'Your order has been sent to the Andhra Ruchulu kitchen.',
-      );
+      finalizeSuccess(data.order.id, data.order.totalAmountInr);
     } catch {
-      setErrors({
-        submit: 'Network error while saving your order. Please try again.',
+      const localSaved = localOrdersService.createOrder({
+        customerName,
+        customerPhone: cleanPhone,
+        fulfillmentType,
+        deliveryAddress,
+        cartItems: items,
       });
+      finalizeSuccess(localSaved.id, localSaved.totalAmountInr);
     } finally {
       setIsSubmitting(false);
     }

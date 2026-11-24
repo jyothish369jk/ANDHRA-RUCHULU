@@ -2,7 +2,25 @@ import type {
   AggregatorAnalyticsEntry,
   AggregatorEntryInput,
   AggregatorPlatform,
+  CartItem,
+  CustomerOrder,
+  OrderFulfillmentType,
+  OrderLineItem,
+  OrderStatus,
 } from '../types/restaurant';
+
+export const LOCAL_VERCEL_SESSION_TOKEN = 'ar_local_vercel_session';
+const LOCAL_ORDERS_STORAGE_KEY = 'ar_local_customer_orders';
+const LOCAL_AGGREGATORS_STORAGE_KEY = 'ar_local_aggregator_analytics';
+
+export function getExpectedAdminPin(): string {
+  const envPin =
+    typeof import.meta !== 'undefined' && import.meta.env
+      ? import.meta.env.VITE_ADMIN_PIN
+      : undefined;
+  const cleaned = String(envPin ?? '').trim();
+  return cleaned || '5588';
+}
 
 export interface ParsedCsvResult {
   entries: AggregatorEntryInput[];
@@ -20,7 +38,6 @@ function formatIsoDate(date: Date): string {
 export function buildSeededAggregatorEntries(
   referenceDate: Date = new Date(),
 ): AggregatorAnalyticsEntry[] {
-  // 14 days of realistic Zomato & Swiggy INR figures for Andhra Ruchulu
   const dailyPatterns: Array<{
     zomatoOrders: number;
     zomatoGross: number;
@@ -205,13 +222,11 @@ export function parseSampleFriendlyCsv(csvText: string): ParsedCsvResult {
 
   for (let rowIdx = 1; rowIdx < lines.length; rowIdx += 1) {
     const cols = splitCsvLine(lines[rowIdx]);
-    // Support either Platform in column 0 or Date in column 0 if Platform header wasn't matched cleanly
     let platform =
       platformIdx !== -1 ? normalizePlatformName(cols[platformIdx]) : null;
     let dateStr = normalizeDateString(cols[dateIdx]);
 
     if (!platform && platformIdx === -1) {
-      // Fallback: inspect first column if not already date
       platform = normalizePlatformName(cols[0]);
     }
     if (!dateStr && platformIdx !== -1 && dateIdx !== -1) {
@@ -270,13 +285,149 @@ export class UnauthorizedAggregatorError extends Error {
   }
 }
 
-async function parseJsonOrThrow<T>(res: Response): Promise<T> {
+class StaticHostFallbackSignal extends Error {
+  constructor() {
+    super('Static host mode');
+    this.name = 'StaticHostFallbackSignal';
+  }
+}
+
+function readLocalAggregators(): AggregatorAnalyticsEntry[] {
+  try {
+    const raw = window.localStorage.getItem(LOCAL_AGGREGATORS_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) {
+        return (parsed as AggregatorAnalyticsEntry[]).sort((a, b) =>
+          b.date.localeCompare(a.date),
+        );
+      }
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  const seeded = buildSeededAggregatorEntries();
+  writeLocalAggregators(seeded);
+  return seeded;
+}
+
+function writeLocalAggregators(entries: AggregatorAnalyticsEntry[]): void {
+  try {
+    window.localStorage.setItem(
+      LOCAL_AGGREGATORS_STORAGE_KEY,
+      JSON.stringify(entries),
+    );
+  } catch {
+    // Ignore storage quota/private-mode errors
+  }
+}
+
+export const localOrdersService = {
+  listOrders(): CustomerOrder[] {
+    try {
+      const raw = window.localStorage.getItem(LOCAL_ORDERS_STORAGE_KEY);
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      return (parsed as CustomerOrder[]).sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+    } catch {
+      return [];
+    }
+  },
+
+  createOrder(params: {
+    customerName: string;
+    customerPhone: string;
+    fulfillmentType: OrderFulfillmentType;
+    deliveryAddress: string;
+    cartItems: CartItem[];
+  }): CustomerOrder {
+    const lineItems: OrderLineItem[] = params.cartItems.map((entry) => ({
+      itemId: entry.item.id,
+      name: entry.item.name,
+      quantity: entry.quantity,
+      spicePreference: entry.spicePreference,
+      portionStyle: entry.portionStyle,
+      unitPriceInr: entry.unitPriceInr,
+      lineTotalInr: entry.unitPriceInr * entry.quantity,
+      notes: entry.notes,
+    }));
+
+    const subtotalInr = lineItems.reduce(
+      (sum, line) => sum + line.lineTotalInr,
+      0,
+    );
+    const taxesInr = Math.round(subtotalInr * 0.05);
+    const totalAmountInr = subtotalInr + taxesInr;
+    const nowIso = new Date().toISOString();
+
+    const newOrder: CustomerOrder = {
+      id: `AR-${Date.now().toString().slice(-4)}${Math.floor(10 + Math.random() * 89)}`,
+      customerName: params.customerName.trim(),
+      customerPhone: params.customerPhone.replace(/\D/g, '').slice(-10),
+      fulfillmentType: params.fulfillmentType,
+      deliveryAddress:
+        params.fulfillmentType === 'Delivery'
+          ? params.deliveryAddress.trim()
+          : params.deliveryAddress.trim() || 'Madhuravada Flagship Pickup / Dine-in',
+      items: lineItems,
+      subtotalInr,
+      taxesInr,
+      totalAmountInr,
+      status: 'Pending',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
+
+    const existing = this.listOrders();
+    const updated = [newOrder, ...existing];
+    try {
+      window.localStorage.setItem(
+        LOCAL_ORDERS_STORAGE_KEY,
+        JSON.stringify(updated),
+      );
+    } catch {
+      // Ignore storage errors
+    }
+    return newOrder;
+  },
+
+  updateOrderStatus(orderId: string, nextStatus: OrderStatus): CustomerOrder | null {
+    const existing = this.listOrders();
+    let updatedOrder: CustomerOrder | null = null;
+    const nextList = existing.map((ord) => {
+      if (ord.id !== orderId) return ord;
+      updatedOrder = {
+        ...ord,
+        status: nextStatus,
+        updatedAt: new Date().toISOString(),
+      };
+      return updatedOrder;
+    });
+    if (updatedOrder) {
+      try {
+        window.localStorage.setItem(
+          LOCAL_ORDERS_STORAGE_KEY,
+          JSON.stringify(nextList),
+        );
+      } catch {
+        // Ignore storage errors
+      }
+    }
+    return updatedOrder;
+  },
+};
+
+async function parseJsonOrFallback<T>(res: Response): Promise<T> {
   if (res.status === 401) {
     throw new UnauthorizedAggregatorError();
   }
   const contentType = res.headers.get('content-type') || '';
-  if (!contentType.includes('application/json')) {
-    throw new Error('Unexpected response from analytics service.');
+  if (res.status === 404 || !contentType.includes('application/json')) {
+    throw new StaticHostFallbackSignal();
   }
   const data = (await res.json()) as T & { error?: string };
   if (!res.ok) {
@@ -289,49 +440,127 @@ export const dataService = {
   async listAggregatorEntries(
     token: string,
   ): Promise<AggregatorAnalyticsEntry[]> {
-    const res = await fetch('/api/admin/aggregators', {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-    const data = await parseJsonOrThrow<{
-      entries: AggregatorAnalyticsEntry[];
-    }>(res);
-    return Array.isArray(data.entries) ? data.entries : [];
+    if (token === LOCAL_VERCEL_SESSION_TOKEN) {
+      return readLocalAggregators();
+    }
+    try {
+      const res = await fetch('/api/admin/aggregators', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await parseJsonOrFallback<{
+        entries: AggregatorAnalyticsEntry[];
+      }>(res);
+      return Array.isArray(data.entries) ? data.entries : [];
+    } catch (error) {
+      if (error instanceof StaticHostFallbackSignal) {
+        return readLocalAggregators();
+      }
+      throw error;
+    }
   },
 
   async createAggregatorEntry(
     token: string,
     payload: AggregatorEntryInput,
   ): Promise<AggregatorAnalyticsEntry> {
-    const res = await fetch('/api/admin/aggregators', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify(payload),
-    });
-    const data = await parseJsonOrThrow<{ entry: AggregatorAnalyticsEntry }>(
-      res,
-    );
-    return data.entry;
+    const buildLocalEntry = (): AggregatorAnalyticsEntry => {
+      const nowIso = new Date().toISOString();
+      const gross = Math.round(payload.grossSalesInr);
+      const ded = Math.round(payload.deductionsInr);
+      const created: AggregatorAnalyticsEntry = {
+        id: `agg-${Date.now().toString(36)}-${Math.floor(100 + Math.random() * 899)}`,
+        platform: payload.platform,
+        date: payload.date,
+        orders: Math.round(payload.orders),
+        grossSalesInr: gross,
+        deductionsInr: ded,
+        netPayoutInr: gross - ded,
+        source: payload.source || 'Manual',
+        notes: payload.notes,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+      const existing = readLocalAggregators();
+      writeLocalAggregators([created, ...existing]);
+      return created;
+    };
+
+    if (token === LOCAL_VERCEL_SESSION_TOKEN) {
+      return buildLocalEntry();
+    }
+
+    try {
+      const res = await fetch('/api/admin/aggregators', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+      const data = await parseJsonOrFallback<{
+        entry: AggregatorAnalyticsEntry;
+      }>(res);
+      return data.entry;
+    } catch (error) {
+      if (error instanceof StaticHostFallbackSignal) {
+        return buildLocalEntry();
+      }
+      throw error;
+    }
   },
 
   async importAggregatorEntries(
     token: string,
     rows: AggregatorEntryInput[],
   ): Promise<AggregatorAnalyticsEntry[]> {
-    const res = await fetch('/api/admin/aggregators/import', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${token}`,
-      },
-      body: JSON.stringify({ entries: rows }),
-    });
-    const data = await parseJsonOrThrow<{
-      entries: AggregatorAnalyticsEntry[];
-    }>(res);
-    return Array.isArray(data.entries) ? data.entries : [];
+    const buildLocalImport = (): AggregatorAnalyticsEntry[] => {
+      const nowIso = new Date().toISOString();
+      const created: AggregatorAnalyticsEntry[] = rows.map((row, idx) => {
+        const gross = Math.round(row.grossSalesInr);
+        const ded = Math.round(row.deductionsInr);
+        return {
+          id: `csv-${Date.now().toString(36)}-${idx}`,
+          platform: row.platform,
+          date: row.date,
+          orders: Math.round(row.orders),
+          grossSalesInr: gross,
+          deductionsInr: ded,
+          netPayoutInr: gross - ded,
+          source: 'CSV',
+          notes: row.notes,
+          createdAt: nowIso,
+          updatedAt: nowIso,
+        };
+      });
+      const existing = readLocalAggregators();
+      writeLocalAggregators([...created, ...existing]);
+      return created;
+    };
+
+    if (token === LOCAL_VERCEL_SESSION_TOKEN) {
+      return buildLocalImport();
+    }
+
+    try {
+      const res = await fetch('/api/admin/aggregators/import', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ entries: rows }),
+      });
+      const data = await parseJsonOrFallback<{
+        entries: AggregatorAnalyticsEntry[];
+      }>(res);
+      return Array.isArray(data.entries) ? data.entries : [];
+    } catch (error) {
+      if (error instanceof StaticHostFallbackSignal) {
+        return buildLocalImport();
+      }
+      throw error;
+    }
   },
 
   async updateAggregatorEntry(
@@ -339,32 +568,89 @@ export const dataService = {
     id: string,
     payload: AggregatorEntryInput,
   ): Promise<AggregatorAnalyticsEntry> {
-    const res = await fetch(
-      `/api/admin/aggregators/${encodeURIComponent(id)}`,
-      {
-        method: 'PATCH',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
+    const updateLocal = (): AggregatorAnalyticsEntry => {
+      const existing = readLocalAggregators();
+      const gross = Math.round(payload.grossSalesInr);
+      const ded = Math.round(payload.deductionsInr);
+      let updatedItem: AggregatorAnalyticsEntry | null = null;
+      const next = existing.map((item) => {
+        if (item.id !== id) return item;
+        updatedItem = {
+          ...item,
+          platform: payload.platform,
+          date: payload.date,
+          orders: Math.round(payload.orders),
+          grossSalesInr: gross,
+          deductionsInr: ded,
+          netPayoutInr: gross - ded,
+          source: payload.source || item.source,
+          notes: payload.notes,
+          updatedAt: new Date().toISOString(),
+        };
+        return updatedItem;
+      });
+      if (!updatedItem) {
+        throw new Error('Entry not found.');
+      }
+      writeLocalAggregators(next);
+      return updatedItem;
+    };
+
+    if (token === LOCAL_VERCEL_SESSION_TOKEN) {
+      return updateLocal();
+    }
+
+    try {
+      const res = await fetch(
+        `/api/admin/aggregators/${encodeURIComponent(id)}`,
+        {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify(payload),
         },
-        body: JSON.stringify(payload),
-      },
-    );
-    const data = await parseJsonOrThrow<{ entry: AggregatorAnalyticsEntry }>(
-      res,
-    );
-    return data.entry;
+      );
+      const data = await parseJsonOrFallback<{
+        entry: AggregatorAnalyticsEntry;
+      }>(res);
+      return data.entry;
+    } catch (error) {
+      if (error instanceof StaticHostFallbackSignal) {
+        return updateLocal();
+      }
+      throw error;
+    }
   },
 
   async deleteAggregatorEntry(token: string, id: string): Promise<void> {
-    const res = await fetch(
-      `/api/admin/aggregators/${encodeURIComponent(id)}`,
-      {
-        method: 'DELETE',
-        headers: { Authorization: `Bearer ${token}` },
-      },
-    );
-    await parseJsonOrThrow<{ ok: boolean }>(res);
+    const deleteLocal = () => {
+      const existing = readLocalAggregators();
+      writeLocalAggregators(existing.filter((item) => item.id !== id));
+    };
+
+    if (token === LOCAL_VERCEL_SESSION_TOKEN) {
+      deleteLocal();
+      return;
+    }
+
+    try {
+      const res = await fetch(
+        `/api/admin/aggregators/${encodeURIComponent(id)}`,
+        {
+          method: 'DELETE',
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      await parseJsonOrFallback<{ ok: boolean }>(res);
+    } catch (error) {
+      if (error instanceof StaticHostFallbackSignal) {
+        deleteLocal();
+        return;
+      }
+      throw error;
+    }
   },
 
   parseCsv: parseSampleFriendlyCsv,

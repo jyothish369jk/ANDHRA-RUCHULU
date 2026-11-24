@@ -220,12 +220,14 @@ const AUTHORIZED_OWNER_EMAIL = 'jyothish369k@gmail.com';
 
 function isAuthorizedOwnerPin(rawPin: unknown): boolean {
   const cleanPin = String(rawPin ?? '').trim();
-  if (!/^\d{4}$/.test(cleanPin)) {
+  if (!cleanPin) {
     return false;
   }
 
-  const configuredPin = String(process.env.OWNER_PIN ?? '').trim();
-  if (/^\d{4}$/.test(configuredPin)) {
+  const configuredPin = String(
+    process.env.OWNER_PIN || process.env.VITE_ADMIN_PIN || '',
+  ).trim();
+  if (configuredPin.length >= 4) {
     const submittedDigest = crypto.createHash('sha256').update(cleanPin).digest();
     const expectedDigest = crypto
       .createHash('sha256')
@@ -236,9 +238,12 @@ function isAuthorizedOwnerPin(rawPin: unknown): boolean {
     }
   }
 
-  const derived = crypto.scryptSync(cleanPin, DEFAULT_PIN_SALT, 32);
-  const expected = Buffer.from(DEFAULT_PIN_HASH, 'hex');
-  return crypto.timingSafeEqual(derived, expected);
+  if (/^\d{4}$/.test(cleanPin)) {
+    const derived = crypto.scryptSync(cleanPin, DEFAULT_PIN_SALT, 32);
+    const expected = Buffer.from(DEFAULT_PIN_HASH, 'hex');
+    return crypto.timingSafeEqual(derived, expected);
+  }
+  return false;
 }
 
 function signToken(payload: OwnerTokenPayload): string {
