@@ -54,7 +54,7 @@ export function HeroSection({ onExploreMenu, onBookTable }: HeroSectionProps) {
           className="flex flex-col justify-center will-change-transform lg:col-span-6"
         >
           <p className="text-sm font-medium tracking-wide text-[#F59E0B]">
-            Hyderabad · Visakhapatnam Flagship
+            Madhuravada · Visakhapatnam Flagship
           </p>
 
           <h1
@@ -87,7 +87,7 @@ export function HeroSection({ onExploreMenu, onBookTable }: HeroSectionProps) {
           {/* High-Visibility Online Delivery CTAs (Zomato & Swiggy) */}
           <div className="mt-5">
             <p className="mb-2.5 text-xs font-medium text-[#94A3B8]">
-              Order Delivery · Visakhapatnam &amp; Hyderabad
+              Order Delivery · Visakhapatnam
             </p>
             <div className="grid grid-cols-1 gap-3 min-[360px]:grid-cols-2 sm:inline-flex sm:flex-wrap sm:items-center">
               <a

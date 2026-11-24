@@ -39,15 +39,20 @@ export interface CartItem {
 }
 
 export interface FlagshipLocation {
-  id: 'hyderabad' | 'visakhapatnam';
+  id: 'madhuravada-vizag';
   city: string;
   neighborhood: string;
   address: string;
+  shortAddress: string;
   hours: string;
   phone: string;
   email: string;
+  coordinates: {
+    lat: number;
+    lng: number;
+  };
   coordinatesLabel: string;
-  landmarks: Array<{ id: string; label: string; x: number; y: number; distance: string }>;
+  directionsUrl: string;
 }
 
 export type ReservationOccasion =
@@ -68,4 +73,34 @@ export interface TableBooking {
   bookedAt: string;
   status: 'Sent via WhatsApp (Awaiting Reply)';
   locationName?: string;
+}
+
+export type OrderStatus = 'Pending' | 'Preparing' | 'Delivered' | 'Cancelled';
+
+export type OrderFulfillmentType = 'Delivery' | 'Pickup';
+
+export interface OrderLineItem {
+  itemId: string;
+  name: string;
+  quantity: number;
+  spicePreference: SpicePreference;
+  portionStyle: PortionStyle;
+  unitPriceInr: number;
+  lineTotalInr: number;
+  notes?: string;
+}
+
+export interface CustomerOrder {
+  id: string;
+  customerName: string;
+  customerPhone: string;
+  fulfillmentType: OrderFulfillmentType;
+  deliveryAddress: string;
+  items: OrderLineItem[];
+  subtotalInr: number;
+  taxesInr: number;
+  totalAmountInr: number;
+  status: OrderStatus;
+  createdAt: string;
+  updatedAt: string;
 }

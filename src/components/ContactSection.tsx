@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { motion, useScroll, useTransform } from 'motion/react';
 import {
   AlertTriangle,
@@ -10,13 +10,10 @@ import {
   MapPin,
   MessageCircle,
   Minus,
-  Navigation,
   Phone,
   Plus,
-  ZoomIn,
-  ZoomOut,
 } from 'lucide-react';
-import { FLAGSHIP_LOCATIONS } from '../data/menuData';
+import { RESTAURANT_LOCATION } from '../data/menuData';
 import type { ReservationOccasion, TableBooking } from '../types/restaurant';
 import {
   buildWhatsAppBookingUrl,
@@ -24,6 +21,7 @@ import {
   getDefaultBookingDateTime,
   getMinAdvanceDateTime,
 } from '../utils/reservationsStorage';
+import { FixedLocationMap } from './FixedLocationMap';
 import { MagneticButton } from './InteractivePrimitives';
 
 interface ContactSectionProps {
@@ -55,9 +53,7 @@ export function ContactSection({
   onOpenMyBookings,
 }: ContactSectionProps) {
   const sectionRef = useRef<HTMLElement | null>(null);
-  const [selectedCity, setSelectedCity] = useState<'hyderabad' | 'visakhapatnam'>('hyderabad');
-  const [selectedLandmarkId, setSelectedLandmarkId] = useState<string>('jubilee');
-  const [mapZoomed, setMapZoomed] = useState(false);
+  const activeLocation = RESTAURANT_LOCATION;
 
   const { scrollYProgress } = useScroll({
     target: sectionRef,
@@ -77,26 +73,6 @@ export function ContactSection({
     booking: TableBooking;
     whatsappUrl: string;
   } | null>(null);
-
-  const activeLocation = useMemo(
-    () => FLAGSHIP_LOCATIONS.find((loc) => loc.id === selectedCity) ?? FLAGSHIP_LOCATIONS[0],
-    [selectedCity],
-  );
-
-  const activeLandmark = useMemo(
-    () =>
-      activeLocation.landmarks.find((l) => l.id === selectedLandmarkId) ??
-      activeLocation.landmarks[0],
-    [activeLocation, selectedLandmarkId],
-  );
-
-  const handleCitySwitch = (cityId: 'hyderabad' | 'visakhapatnam') => {
-    setSelectedCity(cityId);
-    const nextLoc = FLAGSHIP_LOCATIONS.find((l) => l.id === cityId);
-    if (nextLoc) {
-      setSelectedLandmarkId(nextLoc.landmarks[0].id);
-    }
-  };
 
   const handleDateTimeFocus = () => {
     setMinDateTime(getMinAdvanceDateTime());
@@ -177,7 +153,7 @@ export function ContactSection({
         transition={{ duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
         className="mb-10"
       >
-        <p className="text-sm font-medium text-[#F59E0B]">Reservations &amp; Flagships</p>
+        <p className="text-sm font-medium text-[#F59E0B]">Reservations &amp; Location</p>
         <h2
           className="text-balance mt-2 font-serif font-semibold tracking-tight text-[#F8FAFC]"
           style={{ fontSize: 'clamp(2.1rem, 3.8vw, 3.3rem)', lineHeight: 1.08 }}
@@ -195,44 +171,33 @@ export function ContactSection({
         transition={{ duration: 0.65, ease: [0.16, 1, 0.3, 1] }}
         className="glass-panel-elevated grid grid-cols-1 overflow-hidden rounded-3xl will-change-transform lg:grid-cols-12"
       >
-        {/* Left Side: Location, Hours & Stylized Interactive Dark-Mode Map */}
+        {/* Left Side: Fixed Location Details & Google Maps View */}
         <div className="flex flex-col justify-between border-b border-white/10 p-6 sm:p-8 lg:col-span-6 lg:border-r lg:border-b-0 lg:p-10">
           <div>
-            {/* Flagship Location Switcher */}
-            <div
-              role="tablist"
-              aria-label="Flagship locations"
-              className="inline-flex items-center gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1"
-            >
-              {FLAGSHIP_LOCATIONS.map((loc) => {
-                const isSelected = loc.id === selectedCity;
-                return (
-                  <button
-                    key={loc.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={isSelected}
-                    onClick={() => handleCitySwitch(loc.id)}
-                    className={`min-h-[38px] cursor-pointer rounded-lg px-4 py-1.5 text-xs font-semibold whitespace-nowrap transition-colors ${
-                      isSelected
-                        ? 'bg-[#F59E0B] text-[#0B0C10]'
-                        : 'text-[#94A3B8] hover:text-[#F8FAFC]'
-                    }`}
-                  >
-                    {loc.city}
-                  </button>
-                );
-              })}
-            </div>
+            <p className="inline-flex items-center gap-1.5 rounded-lg border border-[#F59E0B]/30 bg-[#F59E0B]/10 px-3 py-1 text-xs font-semibold text-[#F59E0B]">
+              <MapPin className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>{activeLocation.city} Flagship</span>
+            </p>
 
-            <h3 className="mt-6 font-serif text-2xl font-semibold text-[#F8FAFC] sm:text-3xl">
+            <h3 className="mt-4 font-serif text-2xl font-semibold text-[#F8FAFC] sm:text-3xl">
               {activeLocation.neighborhood}
             </h3>
 
             <div className="mt-5 space-y-4 text-sm text-[#94A3B8]">
               <div className="flex items-start gap-3">
                 <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-[#F59E0B]" aria-hidden="true" />
-                <span>{activeLocation.address}</span>
+                <div>
+                  <p className="leading-relaxed text-[#F8FAFC]/90">{activeLocation.address}</p>
+                  <a
+                    href={activeLocation.directionsUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="mt-1.5 inline-flex items-center gap-1 text-xs font-semibold text-[#F59E0B] transition-colors hover:text-[#FBBF24]"
+                  >
+                    <span>Get Directions on Google Maps</span>
+                    <ExternalLink className="h-3 w-3" aria-hidden="true" />
+                  </a>
+                </div>
               </div>
               <div className="flex items-start gap-3">
                 <Clock className="mt-0.5 h-4 w-4 shrink-0 text-[#F59E0B]" aria-hidden="true" />
@@ -257,106 +222,7 @@ export function ContactSection({
             </div>
           </div>
 
-          {/* Interactive Stylized Dark-Mode Architectural Map */}
-          <div className="mt-8 overflow-hidden rounded-2xl border border-white/12 bg-[#08090C]">
-            <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5 text-xs text-[#94A3B8]">
-              <span className="inline-flex items-center gap-1.5 tabular-nums">
-                <Navigation className="h-3.5 w-3.5 text-[#F59E0B]" aria-hidden="true" />
-                {activeLocation.coordinatesLabel}
-              </span>
-              <button
-                type="button"
-                onClick={() => setMapZoomed((prev) => !prev)}
-                aria-label={mapZoomed ? 'Zoom out map' : 'Zoom in map'}
-                className="inline-flex cursor-pointer items-center gap-1 rounded-md border border-white/10 px-2 py-1 text-[11px] text-[#F8FAFC] transition-colors hover:border-[#F59E0B]/50"
-              >
-                {mapZoomed ? (
-                  <>
-                    <ZoomOut className="h-3 w-3" />
-                    <span>Overview</span>
-                  </>
-                ) : (
-                  <>
-                    <ZoomIn className="h-3 w-3" />
-                    <span>Focus</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            <div className="relative h-52 w-full overflow-hidden">
-              <svg
-                viewBox="0 0 400 210"
-                className={`h-full w-full transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${
-                  mapZoomed ? 'scale-125' : 'scale-100'
-                }`}
-                role="img"
-                aria-label={`Stylized dark architectural map of ${activeLocation.neighborhood}`}
-              >
-                <defs>
-                  <pattern id="urbanGrid" width="28" height="28" patternUnits="userSpaceOnUse">
-                    <path
-                      d="M 28 0 L 0 0 0 28"
-                      fill="none"
-                      stroke="rgba(255,255,255,0.045)"
-                      strokeWidth="1"
-                    />
-                  </pattern>
-                </defs>
-                <rect width="400" height="210" fill="url(#urbanGrid)" />
-
-                <path
-                  d={
-                    selectedCity === 'hyderabad'
-                      ? 'M 0 155 Q 140 120 220 95 T 400 52'
-                      : 'M 0 175 Q 190 150 400 120'
-                  }
-                  fill="none"
-                  stroke="rgba(245, 158, 11, 0.25)"
-                  strokeWidth="2"
-                />
-                <path
-                  d="M 110 0 Q 160 95 215 210"
-                  fill="none"
-                  stroke="rgba(255, 255, 255, 0.08)"
-                  strokeWidth="1.5"
-                />
-                <path
-                  d="M 275 0 L 245 210"
-                  fill="none"
-                  stroke="rgba(255, 255, 255, 0.06)"
-                  strokeWidth="1"
-                />
-              </svg>
-
-              {activeLocation.landmarks.map((pin, idx) => {
-                const isActivePin = pin.id === activeLandmark.id;
-                const isPrimary = idx === 0;
-                return (
-                  <button
-                    key={pin.id}
-                    type="button"
-                    onClick={() => setSelectedLandmarkId(pin.id)}
-                    style={{ left: `${pin.x}%`, top: `${pin.y}%` }}
-                    className={`absolute -translate-x-1/2 -translate-y-1/2 cursor-pointer rounded-full px-2.5 py-1 text-[11px] font-medium whitespace-nowrap transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F59E0B] ${
-                      isPrimary
-                        ? 'border border-[#F59E0B] bg-[#F59E0B] text-[#0B0C10] shadow-[0_0_20px_rgba(245,158,11,0.45)]'
-                        : isActivePin
-                          ? 'border border-white/40 bg-[#14110F] text-[#F8FAFC]'
-                          : 'border border-white/15 bg-[#0B0C10]/90 text-[#94A3B8] hover:text-[#F8FAFC]'
-                    }`}
-                  >
-                    {pin.label}
-                  </button>
-                );
-              })}
-
-              <div className="glass-panel absolute inset-x-3 bottom-3 flex items-center justify-between rounded-xl px-3.5 py-2 text-xs">
-                <span className="font-medium text-[#F8FAFC]">{activeLandmark.label}</span>
-                <span className="text-[#F59E0B]">{activeLandmark.distance}</span>
-              </div>
-            </div>
-          </div>
+          <FixedLocationMap />
         </div>
 
         {/* Right Side: Table Reservation Form with 24h Rule & WhatsApp Integration */}

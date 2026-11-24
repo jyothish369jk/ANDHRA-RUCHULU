@@ -136,38 +136,26 @@ export const MENU_ITEMS: MenuItem[] = [
   },
 ];
 
-export const FLAGSHIP_LOCATIONS: FlagshipLocation[] = [
-  {
-    id: 'hyderabad',
-    city: 'Hyderabad',
-    neighborhood: 'Jubilee Hills Flagship',
-    address: 'Plot 418, Road No. 36, Jubilee Hills, Hyderabad 500033',
-    hours: 'Daily · 12:00 PM – 11:00 PM',
-    phone: '9381228257',
-    email: 'jyothish369k@gmail.com',
-    coordinatesLabel: '17.4326° N, 78.4071° E',
-    landmarks: [
-      { id: 'jubilee', label: 'Andhra Ruchulu Flagship', x: 52, y: 48, distance: 'Valet Arrival' },
-      { id: 'kbr', label: 'KBR National Park', x: 74, y: 34, distance: '4 min drive' },
-      { id: 'peddamma', label: 'Road No. 36 Crossing', x: 30, y: 66, distance: '2 min walk' },
-    ],
+export const RESTAURANT_LOCATION: FlagshipLocation = {
+  id: 'madhuravada-vizag',
+  city: 'Visakhapatnam',
+  neighborhood: 'Madhuravada Flagship, Visakhapatnam',
+  address:
+    'R934+R7V, Durganagar, Pothinamallayya Palem, Madhuravada, Andhra Pradesh 530041, India',
+  shortAddress:
+    'R934+R7V, Durganagar, Pothinamallayya Palem, Madhuravada, Andhra Pradesh 530041',
+  hours: 'Daily · 12:00 PM – 11:00 PM',
+  phone: '9381228257',
+  email: 'jyothish369k@gmail.com',
+  coordinates: {
+    lat: 17.8046,
+    lng: 83.3557,
   },
-  {
-    id: 'visakhapatnam',
-    city: 'Visakhapatnam',
-    neighborhood: 'Beach Road Conservatory',
-    address: '14 Ocean View Terrace, Pandurangapuram, Visakhapatnam 530003',
-    hours: 'Daily · 12:00 PM – 11:00 PM',
-    phone: '9381228257',
-    email: 'jyothish369k@gmail.com',
-    coordinatesLabel: '17.7185° N, 83.3316° E',
-    landmarks: [
-      { id: 'vizag-flagship', label: 'Andhra Ruchulu Conservatory', x: 46, y: 50, distance: 'Oceanfront Deck' },
-      { id: 'rk-beach', label: 'RK Beach Promenade', x: 76, y: 58, distance: '3 min walk' },
-      { id: 'kailasagiri', label: 'Coastal Ridge', x: 28, y: 28, distance: '8 min drive' },
-    ],
-  },
-];
+  coordinatesLabel: '17.8046° N, 83.3557° E',
+  directionsUrl: 'https://www.google.com/maps/search/?api=1&query=17.8046,83.3557',
+};
+
+export const FLAGSHIP_LOCATIONS: FlagshipLocation[] = [RESTAURANT_LOCATION];
 
 export const HERITAGE_CHAPTERS = [
   {

@@ -15,6 +15,8 @@ import { HeroSection } from './components/HeroSection';
 import { MenuSection } from './components/MenuSection';
 import { MyBookingsModal } from './components/MyBookingsModal';
 import { Navbar, type NavSectionId } from './components/Navbar';
+import { OwnerPortalPage } from './components/OwnerPortalPage';
+import { ReviewsSection } from './components/ReviewsSection';
 import { StorySection } from './components/StorySection';
 import type {
   CartItem,
@@ -36,14 +38,41 @@ interface ToastState {
 }
 
 export default function App() {
+  const [isAdminRoute, setIsAdminRoute] = useState<boolean>(() =>
+    window.location.pathname.replace(/\/+$/, '') === '/admin',
+  );
   const [activeSection, setActiveSection] = useState<NavSectionId>('home');
   const [cartItems, setCartItems] = useState<CartItem[]>([]);
   const [cartOpen, setCartOpen] = useState(false);
   const [customizingDish, setCustomizingDish] = useState<MenuItem | null>(null);
   const [myBookingsOpen, setMyBookingsOpen] = useState(false);
   const [bookings, setBookings] = useState<TableBooking[]>(() => loadMyBookingsFromStorage());
+  const [mapsQuotaExceeded, setMapsQuotaExceeded] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const syncRoute = () => {
+      setIsAdminRoute(window.location.pathname.replace(/\/+$/, '') === '/admin');
+    };
+    window.addEventListener('popstate', syncRoute);
+    return () => window.removeEventListener('popstate', syncRoute);
+  }, []);
+
+  const navigateRoute = useCallback((targetPath: '/' | '/admin') => {
+    const normalizedCurrent = window.location.pathname.replace(/\/+$/, '') || '/';
+    if (normalizedCurrent !== targetPath) {
+      window.history.pushState({}, '', targetPath);
+    }
+    setIsAdminRoute(targetPath === '/admin');
+    window.scrollTo({ top: 0, behavior: 'instant' as ScrollBehavior });
+  }, []);
+
+  useEffect(() => {
+    const handleQuotaExceeded = () => setMapsQuotaExceeded(true);
+    window.addEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+    return () => window.removeEventListener('gmp-quota-exceeded', handleQuotaExceeded);
+  }, []);
 
   const { scrollYProgress } = useScroll();
   const scaleX = useSpring(scrollYProgress, {
@@ -63,7 +92,8 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const sectionIds: NavSectionId[] = ['home', 'menu', 'story', 'contact'];
+    if (isAdminRoute) return;
+    const sectionIds: NavSectionId[] = ['home', 'menu', 'story', 'reviews', 'contact'];
     const observer = new IntersectionObserver(
       (entries) => {
         for (const entry of entries) {
@@ -81,7 +111,7 @@ export default function App() {
     }
 
     return () => observer.disconnect();
-  }, []);
+  }, [isAdminRoute]);
 
   const scrollToSection = useCallback((section: NavSectionId) => {
     setActiveSection(section);
@@ -185,6 +215,23 @@ export default function App() {
   return (
     <MotionConfig reducedMotion="user">
       <div className="relative min-h-screen bg-[#0B0C10] text-[#F8FAFC]">
+        {mapsQuotaExceeded && (
+          <div className="sticky top-0 z-50 border-b border-amber-200 bg-amber-50 px-4 py-2.5 text-center text-xs text-amber-900 shadow-sm md:text-sm">
+            <span>
+              Google Maps Platform quota reached. If you are the app owner, visit{' '}
+              <a
+                href="https://developers.google.com/maps/ai/ai-studio?utm_campaign=gmp_mcp_codeassist_v1_aistudio#quota_exceeded_errors"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-semibold text-amber-950 underline hover:text-amber-800"
+              >
+                maps developer site
+              </a>{' '}
+              for instructions to update your account.
+            </span>
+          </div>
+        )}
+
         {/* Top Scroll Progress Ribbon */}
         <motion.div
           aria-hidden="true"
@@ -194,58 +241,72 @@ export default function App() {
 
         <AmbientSpiceCanvas />
 
-        <Navbar
-          activeSection={activeSection}
-          cartCount={totalItemCount}
-          bookingsCount={bookings.length}
-          onNavigate={scrollToSection}
-          onOpenCart={() => setCartOpen(true)}
-          onOpenMyBookings={openMyBookings}
-        />
-
-        <main>
-          <HeroSection
-            onExploreMenu={() => scrollToSection('menu')}
-            onBookTable={() => scrollToSection('contact')}
-          />
-          <MenuSection
-            onQuickAdd={handleQuickAdd}
-            onCustomizeItem={(dish) => setCustomizingDish(dish)}
-          />
-          <StorySection />
-          <ContactSection
+        {isAdminRoute ? (
+          <OwnerPortalPage
+            onBackToSite={() => navigateRoute('/')}
             onShowToast={showToast}
-            onBookingCreated={handleBookingCreated}
-            onOpenMyBookings={openMyBookings}
           />
-        </main>
+        ) : (
+          <>
+            <Navbar
+              activeSection={activeSection}
+              cartCount={totalItemCount}
+              bookingsCount={bookings.length}
+              onNavigate={scrollToSection}
+              onOpenCart={() => setCartOpen(true)}
+              onOpenMyBookings={openMyBookings}
+              onOpenAdmin={() => navigateRoute('/admin')}
+            />
 
-        <Footer onNavigate={scrollToSection} />
+            <main>
+              <HeroSection
+                onExploreMenu={() => scrollToSection('menu')}
+                onBookTable={() => scrollToSection('contact')}
+              />
+              <MenuSection
+                onQuickAdd={handleQuickAdd}
+                onCustomizeItem={(dish) => setCustomizingDish(dish)}
+              />
+              <StorySection />
+              <ReviewsSection />
+              <ContactSection
+                onShowToast={showToast}
+                onBookingCreated={handleBookingCreated}
+                onOpenMyBookings={openMyBookings}
+              />
+            </main>
 
-        <CartDrawer
-          isOpen={cartOpen}
-          items={cartItems}
-          onClose={() => setCartOpen(false)}
-          onUpdateQty={handleUpdateQty}
-          onRemoveItem={handleRemoveItem}
-          onClearCart={() => setCartItems([])}
-          onShowToast={showToast}
-        />
+            <Footer
+              onNavigate={scrollToSection}
+              onOpenAdmin={() => navigateRoute('/admin')}
+            />
 
-        <CustomizeModal
-          dish={customizingDish}
-          onClose={() => setCustomizingDish(null)}
-          onConfirmAdd={handleConfirmCustomizedAdd}
-        />
+            <CartDrawer
+              isOpen={cartOpen}
+              items={cartItems}
+              onClose={() => setCartOpen(false)}
+              onUpdateQty={handleUpdateQty}
+              onRemoveItem={handleRemoveItem}
+              onClearCart={() => setCartItems([])}
+              onShowToast={showToast}
+            />
 
-        <MyBookingsModal
-          isOpen={myBookingsOpen}
-          bookings={bookings}
-          onClose={() => setMyBookingsOpen(false)}
-          onReserveNow={() => scrollToSection('contact')}
-          onRemoveBooking={handleRemoveMyBooking}
-          onShowToast={showToast}
-        />
+            <CustomizeModal
+              dish={customizingDish}
+              onClose={() => setCustomizingDish(null)}
+              onConfirmAdd={handleConfirmCustomizedAdd}
+            />
+
+            <MyBookingsModal
+              isOpen={myBookingsOpen}
+              bookings={bookings}
+              onClose={() => setMyBookingsOpen(false)}
+              onReserveNow={() => scrollToSection('contact')}
+              onRemoveBooking={handleRemoveMyBooking}
+              onShowToast={showToast}
+            />
+          </>
+        )}
 
         {/* Interactive Toast Notification */}
         <AnimatePresence>

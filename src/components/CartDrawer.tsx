@@ -1,7 +1,19 @@
 import { useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { CheckCircle2, MessageCircle, Minus, Plus, ShoppingBag, Trash2, X } from 'lucide-react';
-import type { CartItem } from '../types/restaurant';
+import {
+  CheckCircle2,
+  Loader2,
+  MapPin,
+  MessageCircle,
+  Minus,
+  Plus,
+  ShoppingBag,
+  Store,
+  Trash2,
+  X,
+} from 'lucide-react';
+import type { CartItem, OrderFulfillmentType } from '../types/restaurant';
+import { OWNER_WHATSAPP_NUMBER } from '../utils/reservationsStorage';
 import { FoodImage } from './InteractivePrimitives';
 
 interface CartDrawerProps {
@@ -14,6 +26,21 @@ interface CartDrawerProps {
   onShowToast: (title: string, description: string) => void;
 }
 
+interface CheckoutErrors {
+  customerName?: string;
+  customerPhone?: string;
+  deliveryAddress?: string;
+  submit?: string;
+}
+
+interface PlacedOrderSummary {
+  id: string;
+  totalAmountInr: number;
+  customerName: string;
+  fulfillmentType: OrderFulfillmentType;
+  whatsappUrl: string;
+}
+
 export function CartDrawer({
   isOpen,
   items,
@@ -23,46 +50,150 @@ export function CartDrawer({
   onClearCart,
   onShowToast,
 }: CartDrawerProps) {
-  const [orderPlacedCode, setOrderPlacedCode] = useState<string | null>(null);
+  const [customerName, setCustomerName] = useState('');
+  const [customerPhone, setCustomerPhone] = useState('');
+  const [fulfillmentType, setFulfillmentType] =
+    useState<OrderFulfillmentType>('Delivery');
+  const [deliveryAddress, setDeliveryAddress] = useState('');
+  const [errors, setErrors] = useState<CheckoutErrors>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [placedOrder, setPlacedOrder] = useState<PlacedOrderSummary | null>(
+    null,
+  );
 
-  const subtotal = items.reduce((sum, entry) => sum + entry.unitPriceInr * entry.quantity, 0);
+  const subtotal = items.reduce(
+    (sum, entry) => sum + entry.unitPriceInr * entry.quantity,
+    0,
+  );
   const taxes = Math.round(subtotal * 0.05);
   const grandTotal = subtotal + taxes;
 
-  const handleWhatsAppCheckoutHook = async () => {
-    // TODO: Integrate WhatsApp Checkout API here
+  const validateCheckout = (): boolean => {
+    const nextErrors: CheckoutErrors = {};
+
+    if (!customerName.trim() || customerName.trim().length < 2) {
+      nextErrors.customerName = 'Please enter your name.';
+    }
+
+    const cleanPhone = customerPhone.replace(/\D/g, '');
+    if (cleanPhone.length !== 10) {
+      nextErrors.customerPhone = 'Enter a valid 10-digit phone number.';
+    }
+
+    if (
+      fulfillmentType === 'Delivery' &&
+      (!deliveryAddress.trim() || deliveryAddress.trim().length < 5)
+    ) {
+      nextErrors.deliveryAddress =
+        'Please enter your delivery address in Visakhapatnam.';
+    }
+
+    setErrors(nextErrors);
+    return Object.keys(nextErrors).length === 0;
+  };
+
+  const buildOrderWhatsAppUrl = (orderId: string, cleanPhone: string) => {
     const summaryLines = items.map(
       (entry) =>
         `• ${entry.quantity}x ${entry.item.name} (${entry.spicePreference}, ${entry.portionStyle}) — ₹${
           entry.unitPriceInr * entry.quantity
         }`,
     );
-    const payloadText = `Andhra Ruchulu Order Request:\n${summaryLines.join(
-      '\n',
-    )}\nTotal (incl. 5% GST): ₹${grandTotal}`;
+    const locationLine =
+      fulfillmentType === 'Delivery'
+        ? `Delivery Address: ${deliveryAddress.trim()}`
+        : `Pickup / Dine-in Note: ${
+            deliveryAddress.trim() || 'Madhuravada Flagship Pickup'
+          }`;
 
-    try {
-      if (navigator.clipboard) {
-        await navigator.clipboard.writeText(payloadText);
-      }
-    } catch {
-      // Clipboard access optional in sandbox
-    }
+    const message = [
+      `Namaskaram Andhra Ruchulu! New Order #${orderId}`,
+      `Customer: ${customerName.trim()} (${cleanPhone})`,
+      `Order Type: ${fulfillmentType}`,
+      locationLine,
+      '',
+      ...summaryLines,
+      '',
+      `Total (incl. 5% GST): ₹${grandTotal}`,
+    ].join('\n');
 
-    onShowToast(
-      'WhatsApp Checkout Hook Ready',
-      'Order summary copied to clipboard. Connect WhatsApp Business API in CartDrawer.tsx.',
-    );
+    return `https://wa.me/${OWNER_WHATSAPP_NUMBER}?text=${encodeURIComponent(message)}`;
   };
 
-  const handleConfirmDiningOrder = () => {
-    const code = `AR-${Math.floor(4000 + Math.random() * 5999)}`;
-    setOrderPlacedCode(code);
-    onClearCart();
-    onShowToast(
-      `Pre-Order Received · #${code}`,
-      'Our kitchen concierge has received your customized dish selection.',
-    );
+  const submitOrder = async (openWhatsAppAfter: boolean) => {
+    if (items.length === 0 || isSubmitting) return;
+    if (!validateCheckout()) return;
+
+    setIsSubmitting(true);
+    setErrors({});
+
+    const cleanPhone = customerPhone.replace(/\D/g, '');
+
+    try {
+      const response = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerName: customerName.trim(),
+          customerPhone: cleanPhone,
+          fulfillmentType,
+          deliveryAddress: deliveryAddress.trim(),
+          items: items.map((entry) => ({
+            itemId: entry.item.id,
+            quantity: entry.quantity,
+            spicePreference: entry.spicePreference,
+            portionStyle: entry.portionStyle,
+            notes: entry.notes,
+          })),
+        }),
+      });
+
+      const contentType = response.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        throw new Error('Unexpected server response.');
+      }
+
+      const data = (await response.json()) as {
+        order?: { id: string; totalAmountInr: number };
+        error?: string;
+      };
+
+      if (!response.ok || !data.order) {
+        setErrors({
+          submit: data.error || 'Could not submit order. Please try again.',
+        });
+        return;
+      }
+
+      const whatsappUrl = buildOrderWhatsAppUrl(data.order.id, cleanPhone);
+
+      if (openWhatsAppAfter) {
+        window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+      }
+
+      setPlacedOrder({
+        id: data.order.id,
+        totalAmountInr: data.order.totalAmountInr,
+        customerName: customerName.trim(),
+        fulfillmentType,
+        whatsappUrl,
+      });
+
+      onClearCart();
+      setCustomerName('');
+      setCustomerPhone('');
+      setDeliveryAddress('');
+      onShowToast(
+        `Order Placed · #${data.order.id}`,
+        'Your order has been sent to the Andhra Ruchulu kitchen.',
+      );
+    } catch {
+      setErrors({
+        submit: 'Network error while saving your order. Please try again.',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -98,7 +229,7 @@ export function CartDrawer({
               <button
                 type="button"
                 onClick={() => {
-                  setOrderPlacedCode(null);
+                  setPlacedOrder(null);
                   onClose();
                 }}
                 aria-label="Close order drawer"
@@ -110,26 +241,42 @@ export function CartDrawer({
 
             {/* Body */}
             <div className="my-4 flex-1 overflow-y-auto pr-1">
-              {orderPlacedCode ? (
+              {placedOrder ? (
                 <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-[#10B981]/30 bg-[#10B981]/[0.06] p-6 text-center">
                   <CheckCircle2 className="h-10 w-10 text-[#10B981]" aria-hidden="true" />
                   <h3 className="mt-4 font-serif text-2xl font-semibold text-[#F8FAFC]">
-                    Order #{orderPlacedCode} Sent to Kitchen
+                    Order #{placedOrder.id} Confirmed
                   </h3>
                   <p className="mt-2 text-sm leading-relaxed text-[#94A3B8]">
-                    Your dishes are queued for claypot preparation. Share this reference upon
-                    arrival or during table service.
+                    Thank you, {placedOrder.customerName}. Your{' '}
+                    {placedOrder.fulfillmentType.toLowerCase()} order for{' '}
+                    <span className="font-semibold text-[#F59E0B] tabular-nums">
+                      ₹{placedOrder.totalAmountInr}
+                    </span>{' '}
+                    has been received by our kitchen.
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setOrderPlacedCode(null);
-                      onClose();
-                    }}
-                    className="mt-6 min-h-[44px] cursor-pointer rounded-xl bg-[#F59E0B] px-6 py-2.5 text-xs font-semibold text-[#0B0C10]"
-                  >
-                    Return to Menu
-                  </button>
+
+                  <div className="mt-6 flex w-full flex-col gap-2.5">
+                    <a
+                      href={placedOrder.whatsappUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-[#10B981] px-5 py-2.5 text-xs font-semibold text-[#0B0C10] transition-colors hover:bg-[#34D399]"
+                    >
+                      <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                      <span>Send Copy on WhatsApp</span>
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPlacedOrder(null);
+                        onClose();
+                      }}
+                      className="min-h-[44px] w-full cursor-pointer rounded-xl bg-[#F59E0B] px-6 py-2.5 text-xs font-semibold text-[#0B0C10]"
+                    >
+                      Return to Menu
+                    </button>
+                  </div>
                 </div>
               ) : items.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center py-12 text-center">
@@ -141,80 +288,227 @@ export function CartDrawer({
                   </p>
                 </div>
               ) : (
-                <ul className="space-y-4">
-                  {items.map((entry) => (
-                    <li
-                      key={entry.cartKey}
-                      className="glass-panel flex gap-3.5 rounded-2xl p-3.5"
-                    >
-                      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-[#14110F]">
-                        <FoodImage
-                          src={entry.item.image}
-                          alt={entry.item.name}
-                          titleFallback={entry.item.name}
-                        />
-                      </div>
-
-                      <div className="flex min-w-0 flex-1 flex-col justify-between">
-                        <div className="flex items-start justify-between gap-2">
-                          <h3 className="truncate font-serif text-lg font-semibold text-[#F8FAFC]">
-                            {entry.item.name}
-                          </h3>
-                          <button
-                            type="button"
-                            onClick={() => onRemoveItem(entry.cartKey)}
-                            aria-label={`Remove ${entry.item.name}`}
-                            className="cursor-pointer text-[#94A3B8] transition-colors hover:text-[#DC2626]"
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                <div className="space-y-5">
+                  <ul className="space-y-3.5">
+                    {items.map((entry) => (
+                      <li
+                        key={entry.cartKey}
+                        className="glass-panel flex gap-3.5 rounded-2xl p-3.5"
+                      >
+                        <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-[#14110F]">
+                          <FoodImage
+                            src={entry.item.image}
+                            alt={entry.item.name}
+                            titleFallback={entry.item.name}
+                          />
                         </div>
 
-                        <p className="mt-0.5 text-xs text-[#94A3B8]">
-                          {entry.spicePreference} · {entry.portionStyle}
-                        </p>
-                        {entry.notes && (
-                          <p className="mt-1 truncate text-[11px] italic text-[#F59E0B]/85">
-                            Note: {entry.notes}
-                          </p>
-                        )}
-
-                        <div className="mt-2.5 flex items-center justify-between">
-                          <div className="inline-flex items-center gap-2 rounded-lg border border-white/12 bg-white/[0.03] px-1.5 py-0.5">
+                        <div className="flex min-w-0 flex-1 flex-col justify-between">
+                          <div className="flex items-start justify-between gap-2">
+                            <h3 className="truncate font-serif text-lg font-semibold text-[#F8FAFC]">
+                              {entry.item.name}
+                            </h3>
                             <button
                               type="button"
-                              onClick={() => onUpdateQty(entry.cartKey, -1)}
-                              aria-label="Decrease quantity"
-                              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-[#94A3B8] hover:text-[#F8FAFC]"
+                              onClick={() => onRemoveItem(entry.cartKey)}
+                              aria-label={`Remove ${entry.item.name}`}
+                              className="cursor-pointer text-[#94A3B8] transition-colors hover:text-[#DC2626]"
                             >
-                              <Minus className="h-3 w-3" />
-                            </button>
-                            <span className="min-w-[1.25rem] text-center text-xs font-semibold text-[#F8FAFC] tabular-nums">
-                              {entry.quantity}
-                            </span>
-                            <button
-                              type="button"
-                              onClick={() => onUpdateQty(entry.cartKey, 1)}
-                              aria-label="Increase quantity"
-                              className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-[#94A3B8] hover:text-[#F8FAFC]"
-                            >
-                              <Plus className="h-3 w-3" />
+                              <Trash2 className="h-3.5 w-3.5" />
                             </button>
                           </div>
 
-                          <span className="text-sm font-semibold text-[#F59E0B] tabular-nums">
-                            ₹{entry.unitPriceInr * entry.quantity}
-                          </span>
+                          <p className="mt-0.5 text-xs text-[#94A3B8]">
+                            {entry.spicePreference} · {entry.portionStyle}
+                          </p>
+                          {entry.notes && (
+                            <p className="mt-1 truncate text-[11px] italic text-[#F59E0B]/85">
+                              Note: {entry.notes}
+                            </p>
+                          )}
+
+                          <div className="mt-2.5 flex items-center justify-between">
+                            <div className="inline-flex items-center gap-2 rounded-lg border border-white/12 bg-white/[0.03] px-1.5 py-0.5">
+                              <button
+                                type="button"
+                                onClick={() => onUpdateQty(entry.cartKey, -1)}
+                                aria-label="Decrease quantity"
+                                className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-[#94A3B8] hover:text-[#F8FAFC]"
+                              >
+                                <Minus className="h-3 w-3" />
+                              </button>
+                              <span className="min-w-[1.25rem] text-center text-xs font-semibold text-[#F8FAFC] tabular-nums">
+                                {entry.quantity}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => onUpdateQty(entry.cartKey, 1)}
+                                aria-label="Increase quantity"
+                                className="flex h-6 w-6 cursor-pointer items-center justify-center rounded text-[#94A3B8] hover:text-[#F8FAFC]"
+                              >
+                                <Plus className="h-3 w-3" />
+                              </button>
+                            </div>
+
+                            <span className="text-sm font-semibold text-[#F59E0B] tabular-nums">
+                              ₹{entry.unitPriceInr * entry.quantity}
+                            </span>
+                          </div>
                         </div>
+                      </li>
+                    ))}
+                  </ul>
+
+                  {/* Customer Order Details */}
+                  <div className="space-y-3 border-t border-white/10 pt-4">
+                    <p className="text-xs font-semibold tracking-wide text-[#F59E0B]">
+                      Guest &amp; Fulfillment Details
+                    </p>
+
+                    <div
+                      role="radiogroup"
+                      aria-label="Order fulfillment type"
+                      className="grid grid-cols-2 gap-2 rounded-xl border border-white/10 bg-white/[0.03] p-1"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFulfillmentType('Delivery');
+                          setErrors((prev) => ({ ...prev, deliveryAddress: undefined }));
+                        }}
+                        className={`inline-flex min-h-[38px] cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                          fulfillmentType === 'Delivery'
+                            ? 'bg-[#F59E0B] text-[#0B0C10]'
+                            : 'text-[#94A3B8] hover:text-[#F8FAFC]'
+                        }`}
+                      >
+                        <MapPin className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>Delivery</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFulfillmentType('Pickup');
+                          setErrors((prev) => ({ ...prev, deliveryAddress: undefined }));
+                        }}
+                        className={`inline-flex min-h-[38px] cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
+                          fulfillmentType === 'Pickup'
+                            ? 'bg-[#F59E0B] text-[#0B0C10]'
+                            : 'text-[#94A3B8] hover:text-[#F8FAFC]'
+                        }`}
+                      >
+                        <Store className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>Pickup</span>
+                      </button>
+                    </div>
+
+                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <div>
+                        <label
+                          htmlFor="cart-name"
+                          className="block text-[11px] font-medium text-[#94A3B8]"
+                        >
+                          Your Name *
+                        </label>
+                        <input
+                          id="cart-name"
+                          type="text"
+                          value={customerName}
+                          onChange={(e) => {
+                            setCustomerName(e.target.value);
+                            if (errors.customerName) {
+                              setErrors((prev) => ({ ...prev, customerName: undefined }));
+                            }
+                          }}
+                          placeholder="Ananya Rao"
+                          className="glass-input mt-1 h-10 w-full rounded-xl px-3 text-xs text-[#F8FAFC] placeholder:text-[#94A3B8]/45"
+                        />
+                        {errors.customerName && (
+                          <p className="mt-1 text-[11px] text-[#DC2626]">
+                            {errors.customerName}
+                          </p>
+                        )}
                       </div>
-                    </li>
-                  ))}
-                </ul>
+
+                      <div>
+                        <label
+                          htmlFor="cart-phone"
+                          className="block text-[11px] font-medium text-[#94A3B8]"
+                        >
+                          Phone (10 digits) *
+                        </label>
+                        <input
+                          id="cart-phone"
+                          type="tel"
+                          inputMode="numeric"
+                          maxLength={10}
+                          value={customerPhone}
+                          onChange={(e) => {
+                            const digits = e.target.value
+                              .replace(/\D/g, '')
+                              .slice(0, 10);
+                            setCustomerPhone(digits);
+                            if (errors.customerPhone) {
+                              setErrors((prev) => ({ ...prev, customerPhone: undefined }));
+                            }
+                          }}
+                          placeholder="9849000000"
+                          className="glass-input mt-1 h-10 w-full rounded-xl px-3 text-xs text-[#F8FAFC] tabular-nums placeholder:text-[#94A3B8]/45"
+                        />
+                        {errors.customerPhone && (
+                          <p className="mt-1 text-[11px] text-[#DC2626]">
+                            {errors.customerPhone}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+
+                    <div>
+                      <label
+                        htmlFor="cart-address"
+                        className="block text-[11px] font-medium text-[#94A3B8]"
+                      >
+                        {fulfillmentType === 'Delivery'
+                          ? 'Delivery Address *'
+                          : 'Pickup Time / Table Note (Optional)'}
+                      </label>
+                      <textarea
+                        id="cart-address"
+                        rows={2}
+                        value={deliveryAddress}
+                        onChange={(e) => {
+                          setDeliveryAddress(e.target.value);
+                          if (errors.deliveryAddress) {
+                            setErrors((prev) => ({ ...prev, deliveryAddress: undefined }));
+                          }
+                        }}
+                        placeholder={
+                          fulfillmentType === 'Delivery'
+                            ? 'Flat 302, MVP Colony / Madhuravada, Visakhapatnam'
+                            : 'Picking up at 8:00 PM at Madhuravada flagship'
+                        }
+                        className="glass-input mt-1 w-full rounded-xl px-3 py-2 text-xs text-[#F8FAFC] placeholder:text-[#94A3B8]/45"
+                      />
+                      {errors.deliveryAddress && (
+                        <p className="mt-1 text-[11px] text-[#DC2626]">
+                          {errors.deliveryAddress}
+                        </p>
+                      )}
+                    </div>
+
+                    {errors.submit && (
+                      <p role="alert" className="text-xs font-medium text-[#DC2626]">
+                        {errors.submit}
+                      </p>
+                    )}
+                  </div>
+                </div>
               )}
             </div>
 
-            {/* Footer Totals & Future-Ready Checkout Actions */}
-            {items.length > 0 && !orderPlacedCode && (
+            {/* Footer Totals & Checkout Actions */}
+            {items.length > 0 && !placedOrder && (
               <div className="border-t border-white/10 pt-4">
                 <div className="space-y-1.5 text-xs text-[#94A3B8]">
                   <div className="flex justify-between">
@@ -234,21 +528,24 @@ export function CartDrawer({
                 <div className="mt-4 flex flex-col gap-2.5">
                   <button
                     type="button"
-                    onClick={handleConfirmDiningOrder}
-                    className="min-h-[44px] w-full cursor-pointer rounded-xl bg-[#F59E0B] px-5 py-3 text-sm font-semibold text-[#0B0C10] transition-colors hover:bg-[#FBBF24]"
+                    disabled={isSubmitting}
+                    onClick={() => submitOrder(false)}
+                    className="inline-flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-[#F59E0B] px-5 py-3 text-sm font-semibold text-[#0B0C10] transition-colors hover:bg-[#FBBF24] disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    Confirm Table Pre-Order
+                    {isSubmitting && (
+                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                    )}
+                    <span>Confirm &amp; Place Order</span>
                   </button>
 
-                  {/* // TODO: Integrate WhatsApp Checkout API here */}
                   <button
                     type="button"
-                    onClick={handleWhatsAppCheckoutHook}
-                    data-checkout-hook="whatsapp-api"
-                    className="inline-flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#10B981]/35 bg-[#10B981]/10 px-5 py-2.5 text-xs font-semibold text-[#10B981] transition-colors hover:bg-[#10B981]/20"
+                    disabled={isSubmitting}
+                    onClick={() => submitOrder(true)}
+                    className="inline-flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#10B981]/35 bg-[#10B981]/10 px-5 py-2.5 text-xs font-semibold text-[#10B981] transition-colors hover:bg-[#10B981]/20 disabled:cursor-not-allowed disabled:opacity-60"
                   >
                     <MessageCircle className="h-4 w-4" aria-hidden="true" />
-                    <span>Order via WhatsApp (API Ready)</span>
+                    <span>Place Order &amp; Send on WhatsApp</span>
                   </button>
                 </div>
               </div>

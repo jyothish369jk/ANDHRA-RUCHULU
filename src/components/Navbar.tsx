@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
-import { CalendarCheck, Menu, MoreVertical, ShoppingBag, X } from 'lucide-react';
+import { CalendarCheck, Menu, MoreVertical, ShieldCheck, ShoppingBag, X } from 'lucide-react';
 import { BrandEmblem } from './InteractivePrimitives';
 
-export type NavSectionId = 'home' | 'menu' | 'story' | 'contact';
+export type NavSectionId = 'home' | 'menu' | 'story' | 'reviews' | 'contact';
 
 interface NavbarProps {
   activeSection: NavSectionId;
@@ -12,12 +12,14 @@ interface NavbarProps {
   onNavigate: (section: NavSectionId) => void;
   onOpenCart: () => void;
   onOpenMyBookings: () => void;
+  onOpenAdmin: () => void;
 }
 
 const NAV_ITEMS: Array<{ id: NavSectionId; label: string }> = [
   { id: 'home', label: 'Home' },
   { id: 'menu', label: 'Menu' },
   { id: 'story', label: 'Story' },
+  { id: 'reviews', label: 'Reviews' },
   { id: 'contact', label: 'Contact' },
 ];
 
@@ -28,6 +30,7 @@ export function Navbar({
   onNavigate,
   onOpenCart,
   onOpenMyBookings,
+  onOpenAdmin,
 }: NavbarProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
@@ -196,6 +199,26 @@ export function Navbar({
                         </span>
                       )}
                     </button>
+
+                    <div className="my-1 border-t border-white/10" role="separator" />
+
+                    <button
+                      type="button"
+                      role="menuitem"
+                      onClick={() => {
+                        setMoreMenuOpen(false);
+                        onOpenAdmin();
+                      }}
+                      className="flex min-h-[42px] w-full cursor-pointer items-center justify-between gap-2.5 rounded-xl px-3.5 py-2 text-left text-xs font-medium text-[#F8FAFC] transition-colors hover:bg-white/[0.08] hover:text-[#F59E0B]"
+                    >
+                      <span className="inline-flex items-center gap-2.5">
+                        <ShieldCheck className="h-4 w-4 text-[#F59E0B]" aria-hidden="true" />
+                        <span>Admin Portal</span>
+                      </span>
+                      <span className="text-[10px] tracking-wider text-[#94A3B8] uppercase">
+                        Owner
+                      </span>
+                    </button>
                   </motion.div>
                 )}
               </AnimatePresence>
@@ -288,6 +311,22 @@ export function Navbar({
                   className="flex min-h-[44px] w-full cursor-pointer items-center justify-center rounded-xl bg-[#F59E0B] px-4 py-2.5 text-sm font-semibold text-[#0B0C10]"
                 >
                   Book a Table
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMobileMenuOpen(false);
+                    onOpenAdmin();
+                  }}
+                  className="flex min-h-[44px] w-full cursor-pointer items-center justify-between rounded-xl border border-white/12 bg-white/[0.03] px-4 py-2.5 text-sm font-medium text-[#CBD5E1] transition-colors hover:border-[#F59E0B]/40 hover:text-[#F8FAFC]"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <ShieldCheck className="h-4 w-4 text-[#F59E0B]" aria-hidden="true" />
+                    <span>Admin Portal</span>
+                  </span>
+                  <span className="text-[10px] tracking-wider text-[#94A3B8] uppercase">
+                    Owner
+                  </span>
                 </button>
               </div>
             </motion.aside>
