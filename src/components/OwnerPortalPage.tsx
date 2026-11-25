@@ -5,6 +5,8 @@ import {
   ArrowLeft,
   BarChart3,
   CalendarCheck,
+  Check,
+  ChevronDown,
   Clock,
   Eye,
   EyeOff,
@@ -14,6 +16,7 @@ import {
   Lock,
   LogOut,
   MapPin,
+  MoreHorizontal,
   Package,
   Phone,
   RefreshCw,
@@ -61,13 +64,58 @@ const ORDER_STATUS_OPTIONS: OrderStatus[] = [
   'Cancelled',
 ];
 
-const BOOKING_STATUS_OPTIONS: BookingStatus[] = [
-  'Sent via WhatsApp (Awaiting Reply)',
+const BOOKING_FILTER_OPTIONS: Array<'All' | BookingStatus> = [
+  'All',
+  'Pending',
   'Confirmed',
   'Seated',
   'Completed',
   'Cancelled',
 ];
+
+const BOOKING_QUICK_STATUS_ACTIONS: Array<{
+  status: BookingStatus;
+  label: string;
+  dotClass: string;
+  activeTextClass: string;
+}> = [
+  {
+    status: 'Pending',
+    label: 'Pending',
+    dotClass: 'bg-amber-400',
+    activeTextClass: 'text-amber-300',
+  },
+  {
+    status: 'Confirmed',
+    label: 'Confirmed',
+    dotClass: 'bg-emerald-400',
+    activeTextClass: 'text-emerald-300',
+  },
+  {
+    status: 'Seated',
+    label: 'Seated',
+    dotClass: 'bg-sky-400',
+    activeTextClass: 'text-sky-300',
+  },
+  {
+    status: 'Completed',
+    label: 'Completed',
+    dotClass: 'bg-slate-400',
+    activeTextClass: 'text-slate-200',
+  },
+  {
+    status: 'Cancelled',
+    label: 'Cancelled',
+    dotClass: 'bg-rose-400',
+    activeTextClass: 'text-rose-300',
+  },
+];
+
+function isPendingBookingStatus(status: BookingStatus): boolean {
+  return (
+    status === 'Pending' || status === 'Sent via WhatsApp (Awaiting Reply)'
+  );
+}
 
 interface OwnerPortalPageProps {
   onBackToSite: () => void;
@@ -89,23 +137,38 @@ function getOrderStatusTone(status: OrderStatus): string {
 
 function getBookingStatusTone(status: BookingStatus): string {
   switch (status) {
+    case 'Pending':
     case 'Sent via WhatsApp (Awaiting Reply)':
-      return 'border-[#F59E0B]/40 bg-[#F59E0B]/12 text-[#F59E0B]';
+      return 'border-amber-400/45 bg-amber-400/15 text-amber-300';
     case 'Confirmed':
-      return 'border-[#10B981]/40 bg-[#10B981]/12 text-[#10B981]';
+      return 'border-emerald-400/45 bg-emerald-400/15 text-emerald-300';
     case 'Seated':
-      return 'border-sky-400/40 bg-sky-400/12 text-sky-300';
+      return 'border-sky-400/45 bg-sky-400/15 text-sky-300';
     case 'Completed':
-      return 'border-white/20 bg-white/[0.08] text-[#CBD5E1]';
+      return 'border-slate-400/35 bg-slate-400/15 text-slate-300';
     case 'Cancelled':
-      return 'border-[#DC2626]/40 bg-[#DC2626]/12 text-[#FCA5A5]';
+      return 'border-rose-500/45 bg-rose-500/15 text-rose-300';
+  }
+}
+
+function getBookingStatusDot(status: BookingStatus): string {
+  switch (status) {
+    case 'Pending':
+    case 'Sent via WhatsApp (Awaiting Reply)':
+      return 'bg-amber-400';
+    case 'Confirmed':
+      return 'bg-emerald-400';
+    case 'Seated':
+      return 'bg-sky-400';
+    case 'Completed':
+      return 'bg-slate-400';
+    case 'Cancelled':
+      return 'bg-rose-400';
   }
 }
 
 function getBookingStatusShortLabel(status: BookingStatus): string {
-  return status === 'Sent via WhatsApp (Awaiting Reply)'
-    ? 'Awaiting Reply'
-    : status;
+  return isPendingBookingStatus(status) ? 'Pending' : status;
 }
 
 function formatOrderTimestamp(iso: string): string {
@@ -191,6 +254,44 @@ export function OwnerPortalPage({
   const [bookingStatusFilter, setBookingStatusFilter] = useState<
     'All' | BookingStatus
   >('All');
+  const [openBookingMenu, setOpenBookingMenu] = useState<{
+    bookingId: string;
+    top: number;
+    left: number;
+    openUpward: boolean;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!openBookingMenu) return;
+
+    const handlePointerDown = (event: MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.closest('[data-booking-quick-menu="true"]') ||
+        target?.closest('[data-booking-quick-trigger="true"]')
+      ) {
+        return;
+      }
+      setOpenBookingMenu(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setOpenBookingMenu(null);
+      }
+    };
+    const handleViewportChange = () => setOpenBookingMenu(null);
+
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('scroll', handleViewportChange, true);
+    window.addEventListener('resize', handleViewportChange);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('scroll', handleViewportChange, true);
+      window.removeEventListener('resize', handleViewportChange);
+    };
+  }, [openBookingMenu]);
 
   const clearSession = useCallback(() => {
     try {
@@ -909,7 +1010,7 @@ export function OwnerPortalPage({
       totalBookings: bookings.length,
       upcomingActiveCount: bookings.filter(
         (b) =>
-          b.status === 'Sent via WhatsApp (Awaiting Reply)' ||
+          isPendingBookingStatus(b.status) ||
           b.status === 'Confirmed' ||
           b.status === 'Seated',
       ).length,
@@ -947,11 +1048,12 @@ export function OwnerPortalPage({
   const filteredBookings = useMemo(() => {
     const q = bookingSearchQuery.trim().toLowerCase();
     return bookings.filter((booking) => {
-      if (
-        bookingStatusFilter !== 'All' &&
-        booking.status !== bookingStatusFilter
-      ) {
-        return false;
+      if (bookingStatusFilter !== 'All') {
+        if (bookingStatusFilter === 'Pending') {
+          if (!isPendingBookingStatus(booking.status)) return false;
+        } else if (booking.status !== bookingStatusFilter) {
+          return false;
+        }
       }
       if (!q) return true;
       return (
@@ -1280,7 +1382,7 @@ export function OwnerPortalPage({
                   {bookingSummary.upcomingActiveCount}
                 </p>
                 <p className="mt-1 text-xs text-[#94A3B8]">
-                  Awaiting reply, confirmed, or seated
+                  Pending, confirmed, or seated
                 </p>
               </div>
 
@@ -1308,7 +1410,7 @@ export function OwnerPortalPage({
                 aria-label="Filter bookings by status"
                 className="flex flex-wrap items-center gap-1.5 rounded-xl border border-white/10 bg-white/[0.03] p-1"
               >
-                {(['All', ...BOOKING_STATUS_OPTIONS] as const).map((status) => {
+                {BOOKING_FILTER_OPTIONS.map((status) => {
                   const isSelected = bookingStatusFilter === status;
                   return (
                     <button
@@ -1410,147 +1512,275 @@ export function OwnerPortalPage({
                   </button>
                 </div>
               ) : (
-                <div className="space-y-4">
-                  {filteredBookings.map((booking) => (
-                    <article
-                      key={booking.id}
-                      className="glass-panel rounded-2xl p-5 sm:p-6"
-                    >
-                      <div className="flex flex-col justify-between gap-4 border-b border-white/10 pb-4 lg:flex-row lg:items-center">
-                        <div className="min-w-0">
-                          <div className="flex flex-wrap items-center gap-2.5">
-                            <span className="font-sans text-lg font-semibold tracking-tight text-[#F8FAFC] tabular-nums">
-                              #{booking.id}
-                            </span>
-                            <span className="inline-flex items-center rounded-lg border border-[#F59E0B]/35 bg-[#F59E0B]/12 px-2.5 py-0.5 text-xs font-semibold text-[#F59E0B]">
-                              {booking.occasion}
-                            </span>
-                            <span className="text-xs text-[#94A3B8] tabular-nums">
-                              Booked {formatOrderTimestamp(booking.bookedAt)}
-                            </span>
-                          </div>
-
-                          <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm">
-                            <span className="font-semibold text-[#F8FAFC]">
-                              {booking.name}
-                            </span>
-                            {booking.phone ? (
-                              <a
-                                href={`tel:${booking.phone}`}
-                                className="inline-flex items-center gap-1.5 text-xs text-[#F59E0B] tabular-nums hover:underline"
-                              >
-                                <Phone className="h-3.5 w-3.5" aria-hidden="true" />
-                                <span>{booking.phone}</span>
-                              </a>
-                            ) : (
-                              <span className="text-xs text-[#94A3B8]">
-                                No phone provided
-                              </span>
-                            )}
-                          </div>
-                        </div>
-
-                        <div className="flex flex-wrap items-center gap-2.5">
-                          <div>
-                            <label
-                              htmlFor={`booking-status-${booking.id}`}
-                              className="sr-only"
+                <div className="glass-panel overflow-hidden rounded-2xl">
+                  <div className="overflow-x-auto">
+                    <table className="w-full min-w-[780px] text-left text-xs">
+                      <thead>
+                        <tr className="border-b border-white/10 bg-white/[0.02] text-[11px] font-semibold tracking-wider text-[#94A3B8] uppercase">
+                          <th className="py-3.5 pr-4 pl-5 sm:pl-6">Booking Ref</th>
+                          <th className="px-4 py-3.5">Guest &amp; Phone</th>
+                          <th className="px-4 py-3.5">Party &amp; Occasion</th>
+                          <th className="px-4 py-3.5">Preferred Date &amp; Time</th>
+                          <th className="px-4 py-3.5">Status</th>
+                          <th className="py-3.5 pr-5 pl-4 text-right sm:pr-6">
+                            Quick Actions
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/8 text-[#F8FAFC]">
+                        {filteredBookings.map((booking) => {
+                          const isBusy =
+                            updatingBookingId === booking.id ||
+                            deletingBookingId === booking.id;
+                          const isMenuOpen =
+                            openBookingMenu?.bookingId === booking.id;
+                          return (
+                            <tr
+                              key={booking.id}
+                              className="transition-colors hover:bg-white/[0.025]"
                             >
-                              Update status for booking {booking.id}
-                            </label>
-                            <select
-                              id={`booking-status-${booking.id}`}
-                              value={booking.status}
-                              disabled={
-                                updatingBookingId === booking.id ||
-                                deletingBookingId === booking.id
-                              }
-                              onChange={(e) =>
-                                void handleBookingStatusChange(
-                                  booking.id,
-                                  e.target.value as BookingStatus,
-                                )
-                              }
-                              className={`min-h-[40px] cursor-pointer rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-[#F59E0B] ${getBookingStatusTone(booking.status)}`}
-                            >
-                              {BOOKING_STATUS_OPTIONS.map((opt) => (
-                                <option
-                                  key={opt}
-                                  value={opt}
-                                  className="bg-[#0B0C10] text-[#F8FAFC]"
+                              <td className="py-4 pr-4 pl-5 align-middle sm:pl-6">
+                                <p className="font-sans text-sm font-semibold tracking-tight text-[#F8FAFC] tabular-nums">
+                                  #{booking.id}
+                                </p>
+                                <p className="mt-0.5 text-[11px] text-[#94A3B8] tabular-nums">
+                                  {formatOrderTimestamp(booking.bookedAt)}
+                                </p>
+                              </td>
+
+                              <td className="px-4 py-4 align-middle">
+                                <p className="text-sm font-semibold text-[#F8FAFC]">
+                                  {booking.name}
+                                </p>
+                                {booking.phone ? (
+                                  <a
+                                    href={`tel:${booking.phone}`}
+                                    className="mt-0.5 inline-flex items-center gap-1.5 text-xs text-[#F59E0B] tabular-nums hover:underline"
+                                  >
+                                    <Phone
+                                      className="h-3 w-3 shrink-0"
+                                      aria-hidden="true"
+                                    />
+                                    <span>{booking.phone}</span>
+                                  </a>
+                                ) : (
+                                  <span className="mt-0.5 block text-[11px] text-[#94A3B8]">
+                                    No phone
+                                  </span>
+                                )}
+                              </td>
+
+                              <td className="px-4 py-4 align-middle">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <span className="inline-flex items-center rounded-md border border-[#F59E0B]/30 bg-[#F59E0B]/10 px-2 py-0.5 text-[11px] font-semibold text-[#F59E0B]">
+                                    {booking.occasion}
+                                  </span>
+                                  <span className="font-sans text-xs font-semibold text-[#F8FAFC] tabular-nums">
+                                    {booking.guests}{' '}
+                                    {booking.guests === 1 ? 'Guest' : 'Guests'}
+                                  </span>
+                                </div>
+                                <p className="mt-1 text-[11px] text-[#94A3B8]">
+                                  {booking.locationName || 'Madhuravada Flagship'}
+                                </p>
+                              </td>
+
+                              <td className="px-4 py-4 align-middle">
+                                <p className="font-sans text-xs font-semibold text-[#F8FAFC] tabular-nums sm:text-sm">
+                                  {formatDisplayDateTime(booking.dateTime)}
+                                </p>
+                              </td>
+
+                              <td className="px-4 py-4 align-middle">
+                                <span
+                                  className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-semibold whitespace-nowrap ${getBookingStatusTone(booking.status)}`}
                                 >
-                                  {getBookingStatusShortLabel(opt)}
-                                </option>
-                              ))}
-                            </select>
+                                  {updatingBookingId === booking.id ? (
+                                    <Loader2
+                                      className="h-3 w-3 animate-spin"
+                                      aria-hidden="true"
+                                    />
+                                  ) : (
+                                    <span
+                                      aria-hidden="true"
+                                      className={`h-1.5 w-1.5 rounded-full ${getBookingStatusDot(booking.status)}`}
+                                    />
+                                  )}
+                                  <span>
+                                    {getBookingStatusShortLabel(booking.status)}
+                                  </span>
+                                </span>
+                              </td>
+
+                              <td className="py-4 pr-5 pl-4 text-right align-middle sm:pr-6">
+                                <div className="inline-flex items-center justify-end gap-2">
+                                  <button
+                                    type="button"
+                                    data-booking-quick-trigger="true"
+                                    disabled={isBusy}
+                                    aria-haspopup="menu"
+                                    aria-expanded={isMenuOpen}
+                                    aria-label={`Change status for reservation ${booking.id}`}
+                                    onClick={(e) => {
+                                      if (isMenuOpen) {
+                                        setOpenBookingMenu(null);
+                                        return;
+                                      }
+                                      const rect =
+                                        e.currentTarget.getBoundingClientRect();
+                                      const menuWidth = 192;
+                                      const openUpward =
+                                        window.innerHeight - rect.bottom < 240 &&
+                                        rect.top > 240;
+                                      setOpenBookingMenu({
+                                        bookingId: booking.id,
+                                        left: Math.min(
+                                          window.innerWidth - menuWidth - 12,
+                                          Math.max(12, rect.right - menuWidth),
+                                        ),
+                                        top: openUpward
+                                          ? rect.top - 6
+                                          : rect.bottom + 6,
+                                        openUpward,
+                                      });
+                                    }}
+                                    className="inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 rounded-xl border border-white/15 bg-white/[0.05] px-3 py-1.5 text-xs font-semibold text-[#F8FAFC] transition-colors hover:border-[#F59E0B]/50 hover:text-[#F59E0B] disabled:cursor-not-allowed disabled:opacity-50"
+                                  >
+                                    <MoreHorizontal
+                                      className="h-3.5 w-3.5"
+                                      aria-hidden="true"
+                                    />
+                                    <span>Status</span>
+                                    <ChevronDown
+                                      className={`h-3 w-3 transition-transform duration-150 ${
+                                        isMenuOpen ? 'rotate-180' : ''
+                                      }`}
+                                      aria-hidden="true"
+                                    />
+                                  </button>
+
+                                  {confirmDeleteBookingId === booking.id ? (
+                                    <div className="inline-flex items-center gap-1.5">
+                                      <button
+                                        type="button"
+                                        disabled={deletingBookingId === booking.id}
+                                        onClick={() =>
+                                          void handleDeleteBooking(booking.id)
+                                        }
+                                        className="min-h-[36px] cursor-pointer rounded-xl bg-[#DC2626] px-2.5 py-1 text-xs font-semibold text-white transition-colors hover:bg-[#b91c1c] disabled:opacity-60"
+                                      >
+                                        {deletingBookingId === booking.id
+                                          ? 'Deleting...'
+                                          : 'Confirm'}
+                                      </button>
+                                      <button
+                                        type="button"
+                                        disabled={deletingBookingId === booking.id}
+                                        onClick={() =>
+                                          setConfirmDeleteBookingId(null)
+                                        }
+                                        className="min-h-[36px] cursor-pointer rounded-xl border border-white/15 bg-white/[0.04] px-2.5 py-1 text-xs font-medium text-[#CBD5E1] hover:text-[#F8FAFC]"
+                                      >
+                                        Cancel
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      disabled={isBusy}
+                                      onClick={() => {
+                                        setOpenBookingMenu(null);
+                                        setConfirmDeleteBookingId(booking.id);
+                                      }}
+                                      aria-label={`Delete reservation ${booking.id}`}
+                                      className="inline-flex h-9 w-9 cursor-pointer items-center justify-center rounded-xl border border-white/12 bg-white/[0.03] text-[#94A3B8] transition-colors hover:border-[#DC2626]/45 hover:bg-[#DC2626]/12 hover:text-[#FCA5A5] disabled:opacity-50"
+                                    >
+                                      <Trash2
+                                        className="h-3.5 w-3.5"
+                                        aria-hidden="true"
+                                      />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Viewport-Safe Quick-Action Status Menu */}
+                  {openBookingMenu &&
+                    (() => {
+                      const activeBooking = filteredBookings.find(
+                        (b) => b.id === openBookingMenu.bookingId,
+                      );
+                      if (!activeBooking) return null;
+                      return (
+                        <div
+                          data-booking-quick-menu="true"
+                          role="menu"
+                          aria-label={`Quick status actions for ${activeBooking.name}`}
+                          style={{
+                            position: 'fixed',
+                            top: openBookingMenu.top,
+                            left: openBookingMenu.left,
+                            transform: openBookingMenu.openUpward
+                              ? 'translateY(-100%)'
+                              : undefined,
+                          }}
+                          className="z-50 w-48 overflow-hidden rounded-2xl border border-white/15 bg-[#14110F]/95 p-1.5 shadow-2xl backdrop-blur-xl"
+                        >
+                          <p className="px-2.5 py-1.5 text-[10px] font-semibold tracking-wider text-[#94A3B8] uppercase">
+                            Set Reservation Status
+                          </p>
+                          <div className="space-y-0.5">
+                            {BOOKING_QUICK_STATUS_ACTIONS.map((opt) => {
+                              const isCurrent =
+                                opt.status === 'Pending'
+                                  ? isPendingBookingStatus(activeBooking.status)
+                                  : activeBooking.status === opt.status;
+                              return (
+                                <button
+                                  key={opt.status}
+                                  type="button"
+                                  role="menuitem"
+                                  onClick={() => {
+                                    setOpenBookingMenu(null);
+                                    if (!isCurrent) {
+                                      void handleBookingStatusChange(
+                                        activeBooking.id,
+                                        opt.status,
+                                      );
+                                    }
+                                  }}
+                                  className={`flex min-h-[36px] w-full cursor-pointer items-center justify-between gap-2 rounded-xl px-2.5 py-1.5 text-left text-xs font-medium transition-colors ${
+                                    isCurrent
+                                      ? `bg-white/[0.08] ${opt.activeTextClass}`
+                                      : 'text-[#F8FAFC] hover:bg-white/[0.07]'
+                                  }`}
+                                >
+                                  <span className="inline-flex items-center gap-2">
+                                    <span
+                                      aria-hidden="true"
+                                      className={`h-2 w-2 rounded-full ${opt.dotClass}`}
+                                    />
+                                    <span>{opt.label}</span>
+                                  </span>
+                                  {isCurrent && (
+                                    <Check
+                                      className="h-3.5 w-3.5 shrink-0"
+                                      aria-hidden="true"
+                                    />
+                                  )}
+                                </button>
+                              );
+                            })}
                           </div>
-
-                          {confirmDeleteBookingId === booking.id ? (
-                            <div className="inline-flex items-center gap-1.5">
-                              <button
-                                type="button"
-                                disabled={deletingBookingId === booking.id}
-                                onClick={() => void handleDeleteBooking(booking.id)}
-                                className="min-h-[40px] cursor-pointer rounded-xl bg-[#DC2626] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#b91c1c] disabled:opacity-60"
-                              >
-                                {deletingBookingId === booking.id
-                                  ? 'Deleting...'
-                                  : 'Confirm Delete'}
-                              </button>
-                              <button
-                                type="button"
-                                disabled={deletingBookingId === booking.id}
-                                onClick={() => setConfirmDeleteBookingId(null)}
-                                className="min-h-[40px] cursor-pointer rounded-xl border border-white/15 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-[#CBD5E1] hover:text-[#F8FAFC]"
-                              >
-                                Cancel
-                              </button>
-                            </div>
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => setConfirmDeleteBookingId(booking.id)}
-                              aria-label={`Delete reservation ${booking.id}`}
-                              className="inline-flex min-h-[40px] cursor-pointer items-center gap-1.5 rounded-xl border border-white/12 bg-white/[0.03] px-3 py-1.5 text-xs font-medium text-[#94A3B8] transition-colors hover:border-[#DC2626]/45 hover:bg-[#DC2626]/12 hover:text-[#FCA5A5]"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" aria-hidden="true" />
-                              <span>Delete</span>
-                            </button>
-                          )}
                         </div>
-                      </div>
-
-                      <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-3">
-                        <div>
-                          <p className="text-xs font-medium text-[#94A3B8]">
-                            Preferred Date &amp; Time
-                          </p>
-                          <p className="mt-1 text-sm font-semibold text-[#F8FAFC] tabular-nums">
-                            {formatDisplayDateTime(booking.dateTime)}
-                          </p>
-                        </div>
-
-                        <div>
-                          <p className="text-xs font-medium text-[#94A3B8]">
-                            Party Size
-                          </p>
-                          <p className="mt-1 font-sans text-sm font-semibold text-[#F59E0B] tabular-nums">
-                            {booking.guests}{' '}
-                            {booking.guests === 1 ? 'Guest' : 'Guests'}
-                          </p>
-                        </div>
-
-                        <div>
-                          <p className="text-xs font-medium text-[#94A3B8]">
-                            Dining Location
-                          </p>
-                          <p className="mt-1 text-sm text-[#F8FAFC]/90">
-                            {booking.locationName || 'Madhuravada Flagship'}
-                          </p>
-                        </div>
-                      </div>
-                    </article>
-                  ))}
+                      );
+                    })()}
                 </div>
               )}
             </div>

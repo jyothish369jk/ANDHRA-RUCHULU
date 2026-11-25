@@ -18,6 +18,7 @@ const VALID_OCCASIONS: ReservationOccasion[] = [
 ];
 
 const VALID_BOOKING_STATUSES: BookingStatus[] = [
+  'Pending',
   'Sent via WhatsApp (Awaiting Reply)',
   'Confirmed',
   'Seated',

@@ -64,6 +64,7 @@ export type ReservationOccasion =
   | 'Other';
 
 export type BookingStatus =
+  | 'Pending'
   | 'Sent via WhatsApp (Awaiting Reply)'
   | 'Confirmed'
   | 'Seated'
