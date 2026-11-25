@@ -27,6 +27,8 @@ import type {
 } from './types/restaurant';
 import {
   appendMyBookingToStorage,
+  BOOKINGS_STORAGE_KEY,
+  BOOKINGS_UPDATED_EVENT,
   loadMyBookingsFromStorage,
   removeMyBookingFromStorage,
 } from './utils/reservationsStorage';
@@ -50,6 +52,23 @@ export default function App() {
   const [mapsQuotaExceeded, setMapsQuotaExceeded] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const syncBookings = () => {
+      setBookings(loadMyBookingsFromStorage());
+    };
+    const handleStorage = (event: StorageEvent) => {
+      if (!event.key || event.key === BOOKINGS_STORAGE_KEY) {
+        syncBookings();
+      }
+    };
+    window.addEventListener(BOOKINGS_UPDATED_EVENT, syncBookings);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener(BOOKINGS_UPDATED_EVENT, syncBookings);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
 
   useEffect(() => {
     const syncRoute = () => {

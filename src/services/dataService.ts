@@ -10,8 +10,150 @@ import type {
 } from '../types/restaurant';
 
 export const LOCAL_VERCEL_SESSION_TOKEN = 'ar_local_vercel_session';
-const LOCAL_ORDERS_STORAGE_KEY = 'ar_local_customer_orders';
+export const LOCAL_ORDERS_STORAGE_KEY = 'ar_local_customer_orders';
 const LOCAL_AGGREGATORS_STORAGE_KEY = 'ar_local_aggregator_analytics';
+const LOCAL_AGGREGATORS_SEEDED_KEY = 'ar_local_aggregator_seeded_v1';
+export const ORDERS_UPDATED_EVENT = 'ar-orders-updated';
+
+const VALID_ORDER_STATUSES: OrderStatus[] = [
+  'Pending',
+  'Preparing',
+  'Delivered',
+  'Cancelled',
+];
+
+export function sanitizeCustomerOrder(raw: unknown): CustomerOrder | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const id = typeof obj.id === 'string' ? obj.id.trim() : '';
+  if (!id) return null;
+
+  const customerName =
+    typeof obj.customerName === 'string' && obj.customerName.trim()
+      ? obj.customerName.trim()
+      : 'Guest';
+  const customerPhone =
+    typeof obj.customerPhone === 'string' ? obj.customerPhone.trim() : '';
+  const fulfillmentType: OrderFulfillmentType =
+    obj.fulfillmentType === 'Pickup' ? 'Pickup' : 'Delivery';
+  const deliveryAddress =
+    typeof obj.deliveryAddress === 'string' && obj.deliveryAddress.trim()
+      ? obj.deliveryAddress.trim()
+      : fulfillmentType === 'Pickup'
+        ? 'Madhuravada Flagship Pickup / Dine-in'
+        : 'Address not provided';
+
+  const rawItems = Array.isArray(obj.items) ? obj.items : [];
+  const items: OrderLineItem[] = rawItems
+    .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === 'object'))
+    .map((entry, idx) => {
+      const quantity = Number.isFinite(Number(entry.quantity)) && Number(entry.quantity) > 0
+        ? Math.round(Number(entry.quantity))
+        : 1;
+      const unitPriceInr = Number.isFinite(Number(entry.unitPriceInr)) && Number(entry.unitPriceInr) >= 0
+        ? Math.round(Number(entry.unitPriceInr))
+        : 0;
+      const lineTotalInr = Number.isFinite(Number(entry.lineTotalInr)) && Number(entry.lineTotalInr) >= 0
+        ? Math.round(Number(entry.lineTotalInr))
+        : unitPriceInr * quantity;
+      return {
+        itemId: typeof entry.itemId === 'string' && entry.itemId ? entry.itemId : `item-${idx}`,
+        name: typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : 'Menu Item',
+        quantity,
+        spicePreference:
+          entry.spicePreference === 'Mild Temper' ||
+          entry.spicePreference === 'Authentic Andhra' ||
+          entry.spicePreference === 'Fiery Guntur'
+            ? entry.spicePreference
+            : 'Authentic Andhra',
+        portionStyle:
+          entry.portionStyle === 'Claypot Feast (+₹180)'
+            ? 'Claypot Feast (+₹180)'
+            : 'Signature Plate',
+        unitPriceInr,
+        lineTotalInr,
+        notes: typeof entry.notes === 'string' && entry.notes.trim() ? entry.notes.trim() : undefined,
+      };
+    });
+
+  const computedSubtotal = items.reduce((sum, l) => sum + l.lineTotalInr, 0);
+  const subtotalInr = Number.isFinite(Number(obj.subtotalInr))
+    ? Math.max(0, Math.round(Number(obj.subtotalInr)))
+    : computedSubtotal;
+  const taxesInr = Number.isFinite(Number(obj.taxesInr))
+    ? Math.max(0, Math.round(Number(obj.taxesInr)))
+    : Math.round(subtotalInr * 0.05);
+  const totalAmountInr = Number.isFinite(Number(obj.totalAmountInr))
+    ? Math.max(0, Math.round(Number(obj.totalAmountInr)))
+    : subtotalInr + taxesInr;
+  const status: OrderStatus = VALID_ORDER_STATUSES.includes(obj.status as OrderStatus)
+    ? (obj.status as OrderStatus)
+    : 'Pending';
+  const nowIso = new Date().toISOString();
+
+  return {
+    id,
+    customerName,
+    customerPhone,
+    fulfillmentType,
+    deliveryAddress,
+    items,
+    subtotalInr,
+    taxesInr,
+    totalAmountInr,
+    status,
+    createdAt: typeof obj.createdAt === 'string' && obj.createdAt ? obj.createdAt : nowIso,
+    updatedAt: typeof obj.updatedAt === 'string' && obj.updatedAt ? obj.updatedAt : nowIso,
+  };
+}
+
+export function sanitizeAggregatorEntry(raw: unknown): AggregatorAnalyticsEntry | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const id = typeof obj.id === 'string' ? obj.id.trim() : '';
+  const platform: AggregatorPlatform | null =
+    obj.platform === 'Zomato' || obj.platform === 'Swiggy' ? obj.platform : null;
+  const date = typeof obj.date === 'string' ? obj.date.trim() : '';
+  if (!id || !platform || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+
+  const orders = Number.isFinite(Number(obj.orders)) ? Math.max(0, Math.round(Number(obj.orders))) : 0;
+  const grossSalesInr = Number.isFinite(Number(obj.grossSalesInr))
+    ? Math.max(0, Math.round(Number(obj.grossSalesInr)))
+    : 0;
+  const deductionsInr = Number.isFinite(Number(obj.deductionsInr))
+    ? Math.max(0, Math.round(Number(obj.deductionsInr)))
+    : 0;
+  const netPayoutInr = Number.isFinite(Number(obj.netPayoutInr))
+    ? Math.round(Number(obj.netPayoutInr))
+    : grossSalesInr - deductionsInr;
+  const source =
+    obj.source === 'CSV' || obj.source === 'Seeded' || obj.source === 'Manual'
+      ? obj.source
+      : 'Manual';
+  const nowIso = new Date().toISOString();
+
+  return {
+    id,
+    platform,
+    date,
+    orders,
+    grossSalesInr,
+    deductionsInr,
+    netPayoutInr,
+    source,
+    notes: typeof obj.notes === 'string' && obj.notes.trim() ? obj.notes.trim() : undefined,
+    createdAt: typeof obj.createdAt === 'string' && obj.createdAt ? obj.createdAt : nowIso,
+    updatedAt: typeof obj.updatedAt === 'string' && obj.updatedAt ? obj.updatedAt : nowIso,
+  };
+}
+
+function notifyOrdersUpdated(): void {
+  try {
+    window.dispatchEvent(new CustomEvent(ORDERS_UPDATED_EVENT));
+  } catch {
+    // Ignore in non-DOM environments
+  }
+}
 
 export function getExpectedAdminPin(): string {
   const envPin =
@@ -295,12 +437,16 @@ class StaticHostFallbackSignal extends Error {
 function readLocalAggregators(): AggregatorAnalyticsEntry[] {
   try {
     const raw = window.localStorage.getItem(LOCAL_AGGREGATORS_STORAGE_KEY);
-    if (raw) {
+    if (raw !== null) {
       const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed) && parsed.length > 0) {
-        return (parsed as AggregatorAnalyticsEntry[]).sort((a, b) =>
-          b.date.localeCompare(a.date),
-        );
+      if (Array.isArray(parsed)) {
+        const sanitized = parsed
+          .map(sanitizeAggregatorEntry)
+          .filter((item): item is AggregatorAnalyticsEntry => item !== null)
+          .sort((a, b) => b.date.localeCompare(a.date));
+        if (sanitized.length > 0 || window.localStorage.getItem(LOCAL_AGGREGATORS_SEEDED_KEY) === 'true') {
+          return sanitized;
+        }
       }
     }
   } catch {
@@ -313,6 +459,7 @@ function readLocalAggregators(): AggregatorAnalyticsEntry[] {
 
 function writeLocalAggregators(entries: AggregatorAnalyticsEntry[]): void {
   try {
+    window.localStorage.setItem(LOCAL_AGGREGATORS_SEEDED_KEY, 'true');
     window.localStorage.setItem(
       LOCAL_AGGREGATORS_STORAGE_KEY,
       JSON.stringify(entries),
@@ -329,10 +476,14 @@ export const localOrdersService = {
       if (!raw) return [];
       const parsed = JSON.parse(raw);
       if (!Array.isArray(parsed)) return [];
-      return (parsed as CustomerOrder[]).sort(
-        (a, b) =>
-          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-      );
+      return parsed
+        .map(sanitizeCustomerOrder)
+        .filter((ord): ord is CustomerOrder => ord !== null)
+        .sort(
+          (a, b) =>
+            (new Date(b.createdAt).getTime() || 0) -
+            (new Date(a.createdAt).getTime() || 0),
+        );
     } catch {
       return [];
     }
@@ -389,6 +540,7 @@ export const localOrdersService = {
         LOCAL_ORDERS_STORAGE_KEY,
         JSON.stringify(updated),
       );
+      notifyOrdersUpdated();
     } catch {
       // Ignore storage errors
     }
@@ -413,11 +565,28 @@ export const localOrdersService = {
           LOCAL_ORDERS_STORAGE_KEY,
           JSON.stringify(nextList),
         );
+        notifyOrdersUpdated();
       } catch {
         // Ignore storage errors
       }
     }
     return updatedOrder;
+  },
+
+  deleteOrder(orderId: string): boolean {
+    const existing = this.listOrders();
+    const filtered = existing.filter((ord) => ord.id !== orderId);
+    if (filtered.length === existing.length) return false;
+    try {
+      window.localStorage.setItem(
+        LOCAL_ORDERS_STORAGE_KEY,
+        JSON.stringify(filtered),
+      );
+      notifyOrdersUpdated();
+    } catch {
+      // Ignore storage errors
+    }
+    return true;
   },
 };
 
@@ -450,7 +619,11 @@ export const dataService = {
       const data = await parseJsonOrFallback<{
         entries: AggregatorAnalyticsEntry[];
       }>(res);
-      return Array.isArray(data.entries) ? data.entries : [];
+      return Array.isArray(data.entries)
+        ? data.entries
+            .map(sanitizeAggregatorEntry)
+            .filter((item): item is AggregatorAnalyticsEntry => item !== null)
+        : [];
     } catch (error) {
       if (error instanceof StaticHostFallbackSignal) {
         return readLocalAggregators();

@@ -1,5 +1,6 @@
 import { motion } from 'motion/react';
 import { ShieldCheck } from 'lucide-react';
+import { RESTAURANT_LOCATION } from '../data/menuData';
 import { BrandEmblem } from './InteractivePrimitives';
 import type { NavSectionId } from './Navbar';
 
@@ -27,13 +28,16 @@ export function Footer({ onNavigate, onOpenAdmin }: FooterProps) {
             <p className="text-xs text-[#94A3B8]">
               R934+R7V, Durganagar, Pothinamallayya Palem, Madhuravada, AP 530041 ·{' '}
               <a
-                href="https://www.google.com/maps/search/?api=1&query=17.8046,83.3557"
+                href={RESTAURANT_LOCATION.directionsUrl}
                 target="_blank"
                 rel="noopener noreferrer"
                 className="text-[#F59E0B] hover:underline"
               >
                 Get Directions
               </a>
+            </p>
+            <p className="mt-1 text-xs text-[#94A3B8]">
+              {RESTAURANT_LOCATION.hours}
             </p>
           </div>
         </div>

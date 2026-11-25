@@ -63,6 +63,13 @@ export type ReservationOccasion =
   | 'Corporate Event'
   | 'Other';
 
+export type BookingStatus =
+  | 'Sent via WhatsApp (Awaiting Reply)'
+  | 'Confirmed'
+  | 'Seated'
+  | 'Completed'
+  | 'Cancelled';
+
 export interface TableBooking {
   id: string;
   name: string;
@@ -71,8 +78,9 @@ export interface TableBooking {
   guests: number;
   dateTime: string;
   bookedAt: string;
-  status: 'Sent via WhatsApp (Awaiting Reply)';
+  status: BookingStatus;
   locationName?: string;
+  updatedAt?: string;
 }
 
 export type OrderStatus = 'Pending' | 'Preparing' | 'Delivered' | 'Cancelled';

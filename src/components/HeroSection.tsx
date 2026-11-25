@@ -115,9 +115,9 @@ export function HeroSection({ onExploreMenu, onBookTable }: HeroSectionProps) {
           <div className="mt-8 flex flex-wrap items-center gap-x-5 gap-y-2 border-t border-white/10 pt-5 text-xs text-[#94A3B8]">
             <span>Wood-Ember Claypot Kitchen</span>
             <span aria-hidden="true">·</span>
-            <span>Daily Coastal Catch</span>
+            <span>Fresh Coastal Catch</span>
             <span aria-hidden="true">·</span>
-            <span>Open Tue – Sun</span>
+            <span>Open Tue – Sun · 12:00 PM – 11:00 PM</span>
           </div>
         </motion.div>
 

@@ -12,7 +12,7 @@
     "lint": "tsc --noEmit"
   },
   "dependencies": {
-    "@google/genai": "^2.4.0",
+    "@google/genai": "^3.6.1",
     "@tailwindcss/vite": "^4.3.3",
     "@types/google.maps": "^3.67.0",
     "@vis.gl/react-google-maps": "^1.10.2",

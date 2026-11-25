@@ -138,7 +138,7 @@ export function ReviewsSection() {
             </div>
             <div>
               <div className="flex items-baseline gap-2">
-                <span className="font-serif text-3xl font-semibold text-[#F8FAFC] tabular-nums">
+                <span className="font-sans text-3xl font-semibold tracking-tight text-[#F8FAFC] tabular-nums">
                   {displayRating}
                 </span>
                 <span className="text-xs text-[#94A3B8] tabular-nums">/ 5.0</span>

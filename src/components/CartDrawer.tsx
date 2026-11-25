@@ -263,7 +263,7 @@ export function CartDrawer({
                 <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-[#10B981]/30 bg-[#10B981]/[0.06] p-6 text-center">
                   <CheckCircle2 className="h-10 w-10 text-[#10B981]" aria-hidden="true" />
                   <h3 className="mt-4 font-serif text-2xl font-semibold text-[#F8FAFC]">
-                    Order #{placedOrder.id} Confirmed
+                    Order <span className="font-sans tabular-nums">#{placedOrder.id}</span> Confirmed
                   </h3>
                   <p className="mt-2 text-sm leading-relaxed text-[#94A3B8]">
                     Thank you, {placedOrder.customerName}. Your{' '}
@@ -431,7 +431,9 @@ export function CartDrawer({
                         </label>
                         <input
                           id="cart-name"
+                          name="customerName"
                           type="text"
+                          autoComplete="name"
                           value={customerName}
                           onChange={(e) => {
                             setCustomerName(e.target.value);
@@ -458,8 +460,10 @@ export function CartDrawer({
                         </label>
                         <input
                           id="cart-phone"
+                          name="customerPhone"
                           type="tel"
                           inputMode="numeric"
+                          autoComplete="tel"
                           maxLength={10}
                           value={customerPhone}
                           onChange={(e) => {
@@ -493,6 +497,10 @@ export function CartDrawer({
                       </label>
                       <textarea
                         id="cart-address"
+                        name="deliveryAddress"
+                        autoComplete={
+                          fulfillmentType === 'Delivery' ? 'street-address' : 'off'
+                        }
                         rows={2}
                         value={deliveryAddress}
                         onChange={(e) => {

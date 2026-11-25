@@ -129,17 +129,21 @@ export function AggregatorAnalyticsTab({
   const [csvError, setCsvError] = useState<string | null>(null);
   const [isImportingCsv, setIsImportingCsv] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const loadEntries = useCallback(async () => {
     setIsLoading(true);
+    setLoadError(null);
     try {
       const list = await dataService.listAggregatorEntries(sessionToken);
-      setEntries(list);
+      setEntries(Array.isArray(list) ? list : []);
     } catch (error) {
       if (error instanceof UnauthorizedAggregatorError) {
         onUnauthorized();
         return;
       }
+      setLoadError('Could not load Zomato & Swiggy analytics right now.');
       onShowToast(
         'Analytics Unavailable',
         'Could not load Zomato & Swiggy analytics data.',
@@ -161,12 +165,22 @@ export function AggregatorAnalyticsTab({
       };
     }
 
-    const latestDateStr = entries.reduce(
+    const validDatedEntries = entries.filter((item) =>
+      /^\d{4}-\d{2}-\d{2}$/.test(item?.date || ''),
+    );
+    if (validDatedEntries.length === 0) {
+      return {
+        filteredEntries: entries,
+        previousWindowEntries: [] as AggregatorAnalyticsEntry[],
+      };
+    }
+
+    const latestDateStr = validDatedEntries.reduce(
       (max, item) => (item.date > max ? item.date : max),
-      entries[0].date,
+      validDatedEntries[0].date,
     );
     const [y, m, d] = latestDateStr.split('-').map(Number);
-    const anchor = new Date(y, m - 1, d);
+    const anchor = new Date(y, (m || 1) - 1, d || 1);
 
     const toDateKey = (dateObj: Date) => {
       const yy = dateObj.getFullYear();
@@ -463,6 +477,7 @@ export function AggregatorAnalyticsTab({
     try {
       await dataService.deleteAggregatorEntry(sessionToken, entry.id);
       setEntries((prev) => prev.filter((item) => item.id !== entry.id));
+      setConfirmDeleteId((prev) => (prev === entry.id ? null : prev));
       onShowToast('Entry Deleted', `Removed ${entry.platform} log for ${formatShortDate(entry.date)}.`);
     } catch (error) {
       if (error instanceof UnauthorizedAggregatorError) {
@@ -627,6 +642,22 @@ export function AggregatorAnalyticsTab({
           </button>
         </div>
       </div>
+
+      {loadError && (
+        <div
+          role="alert"
+          className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-xs text-rose-800"
+        >
+          <span>{loadError}</span>
+          <button
+            type="button"
+            onClick={() => void loadEntries()}
+            className="cursor-pointer rounded-lg border border-rose-300 bg-white px-3 py-1 font-semibold text-rose-700 hover:bg-rose-100"
+          >
+            Retry
+          </button>
+        </div>
+      )}
 
       {isLoading && entries.length === 0 ? (
         <div className="flex items-center justify-center gap-3 py-24 text-sm text-slate-500">
@@ -947,9 +978,9 @@ export function AggregatorAnalyticsTab({
                           transition={{ duration: 0.14 }}
                           style={{
                             left: `${Math.min(
-                              72,
+                              58,
                               Math.max(
-                                4,
+                                2,
                                 ((zomatoCoords[hoveredIdx]?.x ?? padLeft) /
                                   chartWidth) *
                                   100 -
@@ -957,7 +988,7 @@ export function AggregatorAnalyticsTab({
                               ),
                             )}%`,
                           }}
-                          className="pointer-events-none absolute top-2 z-10 w-52 rounded-xl border border-slate-200/90 bg-white/90 p-3 shadow-lg backdrop-blur-md"
+                          className="pointer-events-none absolute top-2 z-10 w-52 max-w-[calc(100%-1rem)] rounded-xl border border-slate-200/90 bg-white/95 p-3 shadow-lg backdrop-blur-md"
                         >
                           <p className="text-[11px] font-semibold text-slate-900">
                             {activeHoverPoint.label} · {activeHoverPoint.date}
@@ -1208,34 +1239,50 @@ export function AggregatorAnalyticsTab({
                           {entry.source}
                         </td>
                         <td className="py-3.5 pr-6 pl-4 text-right">
-                          <div className="inline-flex items-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => openEditDrawer(entry)}
-                              aria-label={`Edit ${entry.platform} entry on ${entry.date}`}
-                              className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-800"
-                            >
-                              <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
-                            </button>
-                            <button
-                              type="button"
-                              disabled={deletingId === entry.id}
-                              onClick={() => handleDeleteEntry(entry)}
-                              aria-label={`Delete ${entry.platform} entry on ${entry.date}`}
-                              className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
-                            >
-                              {deletingId === entry.id ? (
-                                <Loader2
-                                  className="h-3.5 w-3.5 animate-spin"
-                                  aria-hidden="true"
-                                />
-                              ) : (
-                                <Trash2
-                                  className="h-3.5 w-3.5"
-                                  aria-hidden="true"
-                                />
-                              )}
-                            </button>
+                          <div className="inline-flex items-center justify-end gap-1.5">
+                            {confirmDeleteId === entry.id ? (
+                              <>
+                                <button
+                                  type="button"
+                                  disabled={deletingId === entry.id}
+                                  onClick={() => void handleDeleteEntry(entry)}
+                                  className="cursor-pointer rounded-lg bg-rose-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+                                >
+                                  {deletingId === entry.id ? 'Removing...' : 'Confirm'}
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={deletingId === entry.id}
+                                  onClick={() => setConfirmDeleteId(null)}
+                                  className="cursor-pointer rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] font-medium text-slate-600 hover:bg-slate-50"
+                                >
+                                  Cancel
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button
+                                  type="button"
+                                  onClick={() => openEditDrawer(entry)}
+                                  aria-label={`Edit ${entry.platform} entry on ${entry.date}`}
+                                  className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-slate-100 hover:text-slate-800"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" aria-hidden="true" />
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={deletingId === entry.id}
+                                  onClick={() => setConfirmDeleteId(entry.id)}
+                                  aria-label={`Delete ${entry.platform} entry on ${entry.date}`}
+                                  className="inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:opacity-50"
+                                >
+                                  <Trash2
+                                    className="h-3.5 w-3.5"
+                                    aria-hidden="true"
+                                  />
+                                </button>
+                              </>
+                            )}
                           </div>
                         </td>
                       </tr>

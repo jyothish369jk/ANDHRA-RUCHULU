@@ -67,8 +67,8 @@ export function Navbar({
 
   return (
     <>
-      <header className="sticky top-3 z-40 mx-auto w-full max-w-6xl px-4 sm:px-6">
-        <div className="glass-panel-elevated flex h-14 items-center justify-between gap-3 rounded-full px-4 sm:h-16 sm:gap-6 sm:px-6">
+      <header className="sticky top-0 z-50 w-full border-b border-white/12 bg-[#0B0C10]/95 backdrop-blur-md">
+        <div className="mx-auto flex h-16 max-w-7xl items-center justify-between gap-3 px-4 sm:gap-6 sm:px-6 lg:px-8">
           {/* Zone 1: Single-line Brand Wordmark + Custom SVG Emblem */}
           <a
             href="#home"
@@ -178,7 +178,7 @@ export function Navbar({
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, y: 6, scale: 0.95 }}
                     transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}
-                    className="glass-panel-elevated absolute right-0 mt-2.5 w-56 origin-top-right overflow-hidden rounded-2xl p-1.5"
+                    className="absolute right-0 z-50 mt-2.5 w-56 origin-top-right overflow-hidden rounded-2xl border border-white/15 bg-[#14110F]/95 p-1.5 shadow-2xl backdrop-blur-md"
                   >
                     <button
                       type="button"
@@ -235,7 +235,7 @@ export function Navbar({
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             transition={{ duration: 0.2 }}
-            className="fixed inset-0 z-50 bg-black/65 backdrop-blur-md md:hidden"
+            className="fixed inset-0 z-[60] bg-black/75 backdrop-blur-md md:hidden"
             onClick={() => setMobileMenuOpen(false)}
           >
             <motion.aside

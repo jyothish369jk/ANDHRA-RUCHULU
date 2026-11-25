@@ -20,6 +20,7 @@ import {
   formatDisplayDateTime,
   getDefaultBookingDateTime,
   getMinAdvanceDateTime,
+  getTomorrowStartMs,
 } from '../utils/reservationsStorage';
 import { FixedLocationMap } from './FixedLocationMap';
 import { MagneticButton } from './InteractivePrimitives';
@@ -107,8 +108,14 @@ export function ContactSection({
       errors.dateTime = 'Please select your preferred date and time.';
     } else {
       const selectedMs = new Date(dateTime).getTime();
-      const minRequiredMs = Date.now() + 24 * 60 * 60 * 1000;
-      if (Number.isNaN(selectedMs) || selectedMs < minRequiredMs - 60_000) {
+      const tomorrowStartMs = getTomorrowStartMs();
+      const minRequiredMs = Math.max(
+        tomorrowStartMs,
+        Date.now() + 24 * 60 * 60 * 1000,
+      );
+      if (Number.isNaN(selectedMs) || selectedMs < tomorrowStartMs) {
+        errors.dateTime = 'Please choose tomorrow or a future date (at least 24 hours ahead).';
+      } else if (selectedMs < minRequiredMs - 60_000) {
         errors.dateTime = 'Bookings must be made at least 24 hours in advance.';
       }
     }
@@ -129,6 +136,13 @@ export function ContactSection({
     };
 
     onBookingCreated(newBooking);
+
+    // Best-effort sync to Express backend (transparent fallback to localStorage on static hosts)
+    void fetch('/api/bookings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newBooking),
+    }).catch(() => undefined);
 
     const whatsappUrl = buildWhatsAppBookingUrl(newBooking);
     window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
@@ -312,7 +326,12 @@ export function ContactSection({
               </div>
             </motion.div>
           ) : (
-            <form onSubmit={handleSubmit} noValidate className="flex h-full flex-col justify-between">
+            <form
+              onSubmit={handleSubmit}
+              noValidate
+              autoComplete="on"
+              className="flex h-full flex-col justify-between"
+            >
               <div>
                 <h3 className="font-serif text-2xl font-semibold text-[#F8FAFC]">
                   Reserve a Table
@@ -330,7 +349,9 @@ export function ContactSection({
                       </label>
                       <input
                         id="res-name"
+                        name="customerName"
                         type="text"
+                        autoComplete="name"
                         required
                         placeholder="Ananya Rao"
                         value={name}
@@ -351,8 +372,10 @@ export function ContactSection({
                       </label>
                       <input
                         id="res-phone"
+                        name="customerPhone"
                         type="tel"
                         inputMode="numeric"
+                        autoComplete="tel"
                         maxLength={10}
                         required
                         placeholder="9849000000"
@@ -381,6 +404,8 @@ export function ContactSection({
                       </label>
                       <select
                         id="res-occasion"
+                        name="reservationOccasion"
+                        autoComplete="off"
                         required
                         value={occasion}
                         onChange={(e) => {
@@ -417,7 +442,9 @@ export function ContactSection({
                         </button>
                         <input
                           id="res-guests"
+                          name="guestCount"
                           type="number"
+                          autoComplete="off"
                           min={1}
                           max={40}
                           required
@@ -446,7 +473,7 @@ export function ContactSection({
                     </div>
                   </div>
 
-                  {/* Preferred Date & Time (datetime-local with 24h min enforcement) */}
+                  {/* Preferred Date & Time (datetime-local with tomorrow min & 24h rule) */}
                   <div>
                     <label
                       htmlFor="res-datetime"
@@ -456,13 +483,39 @@ export function ContactSection({
                     </label>
                     <input
                       id="res-datetime"
+                      name="reservationDateTime"
                       type="datetime-local"
+                      autoComplete="off"
                       required
                       min={minDateTime}
                       value={dateTime}
                       onFocus={handleDateTimeFocus}
                       onChange={(e) => {
-                        setDateTime(e.target.value);
+                        const nextValue = e.target.value;
+                        setDateTime(nextValue);
+                        const selectedMs = new Date(nextValue).getTime();
+                        const tomorrowStartMs = getTomorrowStartMs();
+                        const minRequiredMs = Math.max(
+                          tomorrowStartMs,
+                          Date.now() + 24 * 60 * 60 * 1000,
+                        );
+                        if (nextValue && !Number.isNaN(selectedMs)) {
+                          if (selectedMs < tomorrowStartMs) {
+                            setFormErrors({
+                              ...formErrors,
+                              dateTime:
+                                'Please choose tomorrow or a future date (at least 24 hours ahead).',
+                            });
+                            return;
+                          }
+                          if (selectedMs < minRequiredMs - 60_000) {
+                            setFormErrors({
+                              ...formErrors,
+                              dateTime: 'Bookings must be made at least 24 hours in advance.',
+                            });
+                            return;
+                          }
+                        }
                         if (formErrors.dateTime) {
                           setFormErrors({ ...formErrors, dateTime: undefined });
                         }

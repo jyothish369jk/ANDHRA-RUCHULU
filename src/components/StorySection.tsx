@@ -142,7 +142,7 @@ export function StorySection() {
                 }}
                 className="glass-panel rounded-2xl p-5"
               >
-                <p className="font-serif text-3xl font-semibold text-[#F59E0B] tabular-nums">
+                <p className="font-sans text-3xl font-semibold tracking-tight text-[#F59E0B] tabular-nums">
                   {metric.value}
                 </p>
                 <p className="mt-1 text-sm font-semibold text-[#F8FAFC]">{metric.label}</p>

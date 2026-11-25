@@ -137,7 +137,9 @@ export function CustomizeModal({ dish, onClose, onConfirmAdd }: CustomizeModalPr
                 </label>
                 <input
                   id="dish-notes"
+                  name="dishNotes"
                   type="text"
+                  autoComplete="off"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   placeholder="e.g., Extra roasted curry leaves, no cashews"
@@ -149,7 +151,7 @@ export function CustomizeModal({ dish, onClose, onConfirmAdd }: CustomizeModalPr
             <div className="mt-8 flex items-center justify-between gap-4 border-t border-white/10 pt-5">
               <div>
                 <span className="text-xs text-[#94A3B8]">Item Total</span>
-                <p className="font-serif text-2xl font-semibold text-[#F59E0B] tabular-nums">
+                <p className="font-sans text-2xl font-semibold tracking-tight text-[#F59E0B] tabular-nums">
                   ₹{computedPrice}
                 </p>
               </div>

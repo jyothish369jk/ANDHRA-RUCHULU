@@ -146,8 +146,20 @@ export function MyBookingsModal({
                           <span className="inline-flex items-center rounded-lg border border-[#F59E0B]/35 bg-[#F59E0B]/12 px-2.5 py-1 text-xs font-semibold text-[#F59E0B]">
                             {booking.occasion}
                           </span>
-                          <span className="inline-flex items-center rounded-lg border border-[#10B981]/30 bg-[#10B981]/12 px-2.5 py-1 text-[11px] font-medium text-[#10B981]">
-                            Sent via WhatsApp
+                          <span
+                            className={`inline-flex items-center rounded-lg border px-2.5 py-1 text-[11px] font-medium ${
+                              booking.status === 'Cancelled'
+                                ? 'border-[#DC2626]/35 bg-[#DC2626]/12 text-[#FCA5A5]'
+                                : booking.status === 'Confirmed' ||
+                                    booking.status === 'Seated' ||
+                                    booking.status === 'Completed'
+                                  ? 'border-[#10B981]/35 bg-[#10B981]/15 text-[#34D399]'
+                                  : 'border-[#10B981]/30 bg-[#10B981]/12 text-[#10B981]'
+                            }`}
+                          >
+                            {booking.status === 'Sent via WhatsApp (Awaiting Reply)'
+                              ? 'Sent via WhatsApp'
+                              : booking.status}
                           </span>
                         </div>
 

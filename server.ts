@@ -8,22 +8,27 @@ import type {
   AggregatorAnalyticsEntry,
   AggregatorEntrySource,
   AggregatorPlatform,
+  BookingStatus,
   CustomerOrder,
   OrderFulfillmentType,
   OrderLineItem,
   OrderStatus,
   PortionStyle,
+  ReservationOccasion,
   SpicePreference,
+  TableBooking,
 } from './src/types/restaurant.ts';
 import { buildSeededAggregatorEntries } from './src/services/dataService.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.resolve(process.cwd(), '.data');
 const ORDERS_FILE = path.resolve(DATA_DIR, 'orders.json');
+const BOOKINGS_FILE = path.resolve(DATA_DIR, 'bookings.json');
 const AGGREGATORS_FILE = path.resolve(DATA_DIR, 'aggregator-analytics.json');
 
 if (
   !ORDERS_FILE.startsWith(DATA_DIR + path.sep) ||
+  !BOOKINGS_FILE.startsWith(DATA_DIR + path.sep) ||
   !AGGREGATORS_FILE.startsWith(DATA_DIR + path.sep)
 ) {
   throw new Error('Invalid orders storage path configuration.');
@@ -70,6 +75,23 @@ const VALID_ORDER_STATUSES: OrderStatus[] = [
   'Cancelled',
 ];
 
+const VALID_OCCASIONS: ReservationOccasion[] = [
+  'Birthday',
+  'Anniversary',
+  'Family Dinner',
+  'Casual Dining',
+  'Corporate Event',
+  'Other',
+];
+
+const VALID_BOOKING_STATUSES: BookingStatus[] = [
+  'Sent via WhatsApp (Awaiting Reply)',
+  'Confirmed',
+  'Seated',
+  'Completed',
+  'Cancelled',
+];
+
 interface OwnerTokenPayload {
   sub: 'owner';
   email: string;
@@ -92,14 +114,98 @@ function runSerialized<T>(task: () => Promise<T>): Promise<T> {
   return next;
 }
 
+function normalizeStoredOrder(raw: unknown): CustomerOrder | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const id = typeof obj.id === 'string' ? obj.id.trim() : '';
+  if (!id) return null;
+  const items = Array.isArray(obj.items) ? (obj.items as OrderLineItem[]) : [];
+  const totalAmountInr = Number.isFinite(Number(obj.totalAmountInr))
+    ? Math.max(0, Math.round(Number(obj.totalAmountInr)))
+    : 0;
+  const status: OrderStatus = VALID_ORDER_STATUSES.includes(obj.status as OrderStatus)
+    ? (obj.status as OrderStatus)
+    : 'Pending';
+  const nowIso = new Date().toISOString();
+  return {
+    id,
+    customerName:
+      typeof obj.customerName === 'string' && obj.customerName.trim()
+        ? obj.customerName.trim()
+        : 'Guest',
+    customerPhone:
+      typeof obj.customerPhone === 'string' ? obj.customerPhone.trim() : '',
+    fulfillmentType: obj.fulfillmentType === 'Pickup' ? 'Pickup' : 'Delivery',
+    deliveryAddress:
+      typeof obj.deliveryAddress === 'string' && obj.deliveryAddress.trim()
+        ? obj.deliveryAddress.trim()
+        : 'Madhuravada Flagship Pickup / Dine-in',
+    items,
+    subtotalInr: Number.isFinite(Number(obj.subtotalInr))
+      ? Math.max(0, Math.round(Number(obj.subtotalInr)))
+      : totalAmountInr,
+    taxesInr: Number.isFinite(Number(obj.taxesInr))
+      ? Math.max(0, Math.round(Number(obj.taxesInr)))
+      : 0,
+    totalAmountInr,
+    status,
+    createdAt: typeof obj.createdAt === 'string' && obj.createdAt ? obj.createdAt : nowIso,
+    updatedAt: typeof obj.updatedAt === 'string' && obj.updatedAt ? obj.updatedAt : nowIso,
+  };
+}
+
+function normalizeStoredBooking(raw: unknown): TableBooking | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const obj = raw as Record<string, unknown>;
+  const id = typeof obj.id === 'string' ? obj.id.trim() : '';
+  const name = typeof obj.name === 'string' ? obj.name.trim() : '';
+  if (!id || !name) return null;
+  const guestsNum = Number(obj.guests);
+  const nowIso = new Date().toISOString();
+  return {
+    id,
+    name,
+    phone: typeof obj.phone === 'string' ? obj.phone.trim() : '',
+    occasion: VALID_OCCASIONS.includes(obj.occasion as ReservationOccasion)
+      ? (obj.occasion as ReservationOccasion)
+      : 'Other',
+    guests:
+      Number.isFinite(guestsNum) && guestsNum >= 1
+        ? Math.min(100, Math.round(guestsNum))
+        : 2,
+    dateTime:
+      typeof obj.dateTime === 'string' && obj.dateTime.trim()
+        ? obj.dateTime.trim()
+        : nowIso,
+    bookedAt:
+      typeof obj.bookedAt === 'string' && obj.bookedAt.trim()
+        ? obj.bookedAt.trim()
+        : nowIso,
+    status: VALID_BOOKING_STATUSES.includes(obj.status as BookingStatus)
+      ? (obj.status as BookingStatus)
+      : 'Sent via WhatsApp (Awaiting Reply)',
+    locationName:
+      typeof obj.locationName === 'string' && obj.locationName.trim()
+        ? obj.locationName.trim()
+        : undefined,
+    updatedAt:
+      typeof obj.updatedAt === 'string' && obj.updatedAt.trim()
+        ? obj.updatedAt.trim()
+        : undefined,
+  };
+}
+
 async function readOrdersFromDisk(): Promise<CustomerOrder[]> {
   try {
     const raw = await fs.readFile(ORDERS_FILE, 'utf8');
     const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? (parsed as CustomerOrder[]) : [];
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map(normalizeStoredOrder)
+      .filter((ord): ord is CustomerOrder => ord !== null);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code === 'ENOENT') {
+    if (code === 'ENOENT' || err instanceof SyntaxError) {
       return [];
     }
     throw err;
@@ -119,16 +225,46 @@ async function writeOrdersToDisk(orders: CustomerOrder[]): Promise<void> {
   await fs.rename(tempFile, ORDERS_FILE);
 }
 
+async function readBookingsFromDisk(): Promise<TableBooking[]> {
+  try {
+    const raw = await fs.readFile(BOOKINGS_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map(normalizeStoredBooking)
+      .filter((b): b is TableBooking => b !== null);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === 'ENOENT' || err instanceof SyntaxError) {
+      return [];
+    }
+    throw err;
+  }
+}
+
+async function writeBookingsToDisk(bookings: TableBooking[]): Promise<void> {
+  await fs.mkdir(DATA_DIR, { recursive: true });
+  const tempFile = path.resolve(
+    DATA_DIR,
+    `bookings.${process.pid}.${Date.now()}.tmp`,
+  );
+  if (!tempFile.startsWith(DATA_DIR + path.sep)) {
+    throw new Error('Invalid temporary bookings file path.');
+  }
+  await fs.writeFile(tempFile, JSON.stringify(bookings, null, 2), 'utf8');
+  await fs.rename(tempFile, BOOKINGS_FILE);
+}
+
 async function readAggregatorsFromDisk(): Promise<AggregatorAnalyticsEntry[]> {
   try {
     const raw = await fs.readFile(AGGREGATORS_FILE, 'utf8');
     const parsed = JSON.parse(raw);
-    if (Array.isArray(parsed) && parsed.length > 0) {
+    if (Array.isArray(parsed)) {
       return parsed as AggregatorAnalyticsEntry[];
     }
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
-    if (code !== 'ENOENT') {
+    if (code !== 'ENOENT' && !(err instanceof SyntaxError)) {
       throw err;
     }
   }
@@ -508,6 +644,97 @@ async function startServer(): Promise<void> {
     });
   });
 
+  // Public table reservation submission (write-only; never exposes other guest bookings)
+  app.post('/api/bookings', async (req: Request, res: Response) => {
+    try {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const name = typeof body.name === 'string' ? body.name.trim() : '';
+      const rawPhone = typeof body.phone === 'string' ? body.phone : '';
+      const normalizedDigits = normalizePhoneInput(rawPhone).replace(/^\+91/, '');
+      const occasion: ReservationOccasion = VALID_OCCASIONS.includes(
+        body.occasion as ReservationOccasion,
+      )
+        ? (body.occasion as ReservationOccasion)
+        : 'Family Dinner';
+      const guestsNum = Number(body.guests);
+      const dateTime =
+        typeof body.dateTime === 'string' ? body.dateTime.trim() : '';
+      const locationName =
+        typeof body.locationName === 'string'
+          ? body.locationName.trim().slice(0, 120)
+          : undefined;
+
+      if (name.length < 2 || name.length > 80) {
+        res.status(400).json({ error: 'Please enter a valid guest name.' });
+        return;
+      }
+
+      if (!/^\d{10}$/.test(normalizedDigits)) {
+        res
+          .status(400)
+          .json({ error: 'Please enter a valid 10-digit phone number.' });
+        return;
+      }
+
+      if (!Number.isFinite(guestsNum) || guestsNum < 1 || guestsNum > 40) {
+        res.status(400).json({ error: 'Guests must be between 1 and 40.' });
+        return;
+      }
+
+      if (!dateTime || Number.isNaN(new Date(dateTime).getTime())) {
+        res.status(400).json({ error: 'Please enter a valid reservation date and time.' });
+        return;
+      }
+
+      const providedId =
+        typeof body.id === 'string' && /^AR-[A-Za-z0-9_-]{3,24}$/.test(body.id.trim())
+          ? body.id.trim()
+          : `AR-${Date.now().toString().slice(-5)}${crypto.randomInt(10, 99)}`;
+
+      const bookedAt =
+        typeof body.bookedAt === 'string' && !Number.isNaN(new Date(body.bookedAt).getTime())
+          ? body.bookedAt
+          : new Date().toISOString();
+
+      const status: BookingStatus = VALID_BOOKING_STATUSES.includes(
+        body.status as BookingStatus,
+      )
+        ? (body.status as BookingStatus)
+        : 'Sent via WhatsApp (Awaiting Reply)';
+
+      const createdBooking: TableBooking = {
+        id: providedId,
+        name,
+        phone: normalizedDigits,
+        occasion,
+        guests: Math.round(guestsNum),
+        dateTime,
+        bookedAt,
+        status,
+        locationName: locationName || 'Madhuravada Flagship',
+        updatedAt: new Date().toISOString(),
+      };
+
+      await runSerialized(async () => {
+        const existing = await readBookingsFromDisk();
+        const deduped = existing.filter((b) => b.id !== createdBooking.id);
+        deduped.unshift(createdBooking);
+        await writeBookingsToDisk(deduped);
+      });
+
+      res.status(201).json({ booking: createdBooking });
+    } catch (error) {
+      console.error('Failed to save table booking:', error);
+      res.status(500).json({ error: 'Unable to save booking right now.' });
+    }
+  });
+
+  app.get('/api/bookings', (_req: Request, res: Response) => {
+    res.status(401).json({
+      error: 'Unauthorized Access: Owner authentication required.',
+    });
+  });
+
   // Passkey-only Admin Portal authentication
   app.post('/api/admin/login', (req: Request, res: Response) => {
     const clientIp = req.ip || 'unknown';
@@ -646,6 +873,130 @@ async function startServer(): Promise<void> {
       } catch (error) {
         console.error('Failed to update order status:', error);
         res.status(500).json({ error: 'Unable to update order status.' });
+      }
+    },
+  );
+
+  // Protected Owner Order Delete
+  app.delete(
+    '/api/admin/orders/:id',
+    requireOwnerAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const orderId = String(req.params.id || '').trim();
+        if (!orderId) {
+          res.status(400).json({ error: 'Missing order id.' });
+          return;
+        }
+        let deleted = false;
+        await runSerialized(async () => {
+          const orders = await readOrdersFromDisk();
+          const filtered = orders.filter((o) => o.id !== orderId);
+          if (filtered.length !== orders.length) {
+            deleted = true;
+            await writeOrdersToDisk(filtered);
+          }
+        });
+        if (!deleted) {
+          res.status(404).json({ error: 'Order not found.' });
+          return;
+        }
+        res.status(200).json({ ok: true });
+      } catch (error) {
+        console.error('Failed to delete order:', error);
+        res.status(500).json({ error: 'Unable to delete order.' });
+      }
+    },
+  );
+
+  // Protected Owner Table Bookings CRUD
+  app.get(
+    '/api/admin/bookings',
+    requireOwnerAuth,
+    async (_req: Request, res: Response) => {
+      try {
+        const allBookings = await readBookingsFromDisk();
+        const sorted = [...allBookings].sort(
+          (a, b) =>
+            (new Date(b.bookedAt).getTime() || 0) -
+            (new Date(a.bookedAt).getTime() || 0),
+        );
+        res.status(200).json({ bookings: sorted });
+      } catch (error) {
+        console.error('Failed to read table bookings:', error);
+        res.status(500).json({ error: 'Unable to load table bookings.' });
+      }
+    },
+  );
+
+  app.patch(
+    '/api/admin/bookings/:id',
+    requireOwnerAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const bookingId = String(req.params.id || '').trim();
+        const body = (req.body ?? {}) as Record<string, unknown>;
+        const nextStatus = body.status as BookingStatus;
+
+        if (!bookingId || !VALID_BOOKING_STATUSES.includes(nextStatus)) {
+          res.status(400).json({ error: 'Invalid booking status update.' });
+          return;
+        }
+
+        let updatedBooking: TableBooking | null = null;
+        await runSerialized(async () => {
+          const bookings = await readBookingsFromDisk();
+          const idx = bookings.findIndex((b) => b.id === bookingId);
+          if (idx === -1) return;
+          bookings[idx] = {
+            ...bookings[idx],
+            status: nextStatus,
+            updatedAt: new Date().toISOString(),
+          };
+          updatedBooking = bookings[idx];
+          await writeBookingsToDisk(bookings);
+        });
+
+        if (!updatedBooking) {
+          res.status(404).json({ error: 'Booking not found.' });
+          return;
+        }
+
+        res.status(200).json({ booking: updatedBooking });
+      } catch (error) {
+        console.error('Failed to update booking status:', error);
+        res.status(500).json({ error: 'Unable to update booking status.' });
+      }
+    },
+  );
+
+  app.delete(
+    '/api/admin/bookings/:id',
+    requireOwnerAuth,
+    async (req: Request, res: Response) => {
+      try {
+        const bookingId = String(req.params.id || '').trim();
+        if (!bookingId) {
+          res.status(400).json({ error: 'Missing booking id.' });
+          return;
+        }
+        let deleted = false;
+        await runSerialized(async () => {
+          const bookings = await readBookingsFromDisk();
+          const filtered = bookings.filter((b) => b.id !== bookingId);
+          if (filtered.length !== bookings.length) {
+            deleted = true;
+            await writeBookingsToDisk(filtered);
+          }
+        });
+        if (!deleted) {
+          res.status(404).json({ error: 'Booking not found.' });
+          return;
+        }
+        res.status(200).json({ ok: true });
+      } catch (error) {
+        console.error('Failed to delete booking:', error);
+        res.status(500).json({ error: 'Unable to delete booking.' });
       }
     },
   );

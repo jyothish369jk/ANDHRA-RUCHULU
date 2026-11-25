@@ -144,7 +144,7 @@ export const RESTAURANT_LOCATION: FlagshipLocation = {
     'R934+R7V, Durganagar, Pothinamallayya Palem, Madhuravada, Andhra Pradesh 530041, India',
   shortAddress:
     'R934+R7V, Durganagar, Pothinamallayya Palem, Madhuravada, Andhra Pradesh 530041',
-  hours: 'Daily · 12:00 PM – 11:00 PM',
+  hours: 'Open Tue – Sun · 12:00 PM – 11:00 PM',
   phone: '9381228257',
   email: 'jyothish369k@gmail.com',
   coordinates: {
