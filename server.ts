@@ -18,7 +18,10 @@ import type {
   SpicePreference,
   TableBooking,
 } from './src/types/restaurant.ts';
-import { buildSeededAggregatorEntries } from './src/services/dataService.ts';
+import {
+  buildSeededAggregatorEntries,
+  sanitizeAggregatorEntry,
+} from './src/services/dataService.ts';
 
 const PORT = Number(process.env.PORT) || 3000;
 const DATA_DIR = path.resolve(process.cwd(), '.data');
@@ -39,11 +42,7 @@ const DEFAULT_PIN_HASH =
   '17a22e7817f711880c3081b35e64a7c52a7ed414128a36805a493cd1be0e1969';
 
 const SESSION_SECRET =
-  process.env.ADMIN_SESSION_SECRET ||
-  crypto
-    .createHash('sha256')
-    .update(`${DEFAULT_PIN_HASH}:ar_admin_session_secret_v1`)
-    .digest('hex');
+  process.env.ADMIN_SESSION_SECRET || crypto.randomBytes(32).toString('hex');
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 
 const CANONICAL_MENU_PRICES: Record<string, { name: string; priceInr: number }> = {
@@ -261,7 +260,9 @@ async function readAggregatorsFromDisk(): Promise<AggregatorAnalyticsEntry[]> {
     const raw = await fs.readFile(AGGREGATORS_FILE, 'utf8');
     const parsed = JSON.parse(raw);
     if (Array.isArray(parsed)) {
-      return parsed as AggregatorAnalyticsEntry[];
+      return parsed
+        .map(sanitizeAggregatorEntry)
+        .filter((item): item is AggregatorAnalyticsEntry => item !== null);
     }
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
@@ -350,7 +351,14 @@ function sanitizeAggregatorInput(
 }
 
 function normalizePhoneInput(raw: string): string {
-  return raw.replace(/[\s\-()]/g, '').trim();
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length > 10 && digits.startsWith('91')) {
+    return digits.slice(-10);
+  }
+  if (digits.length === 11 && digits.startsWith('0')) {
+    return digits.slice(1);
+  }
+  return digits;
 }
 
 const AUTHORIZED_OWNER_EMAIL = 'jyothish369k@gmail.com';
@@ -493,10 +501,7 @@ async function startServer(): Promise<void> {
         typeof body.customerName === 'string' ? body.customerName.trim() : '';
       const rawPhone =
         typeof body.customerPhone === 'string' ? body.customerPhone : '';
-      const normalizedDigits = normalizePhoneInput(rawPhone).replace(
-        /^\+91/,
-        '',
-      );
+      const normalizedDigits = normalizePhoneInput(rawPhone);
       const fulfillmentType: OrderFulfillmentType =
         body.fulfillmentType === 'Pickup' ? 'Pickup' : 'Delivery';
       const rawAddress =
@@ -651,7 +656,7 @@ async function startServer(): Promise<void> {
       const body = (req.body ?? {}) as Record<string, unknown>;
       const name = typeof body.name === 'string' ? body.name.trim() : '';
       const rawPhone = typeof body.phone === 'string' ? body.phone : '';
-      const normalizedDigits = normalizePhoneInput(rawPhone).replace(/^\+91/, '');
+      const normalizedDigits = normalizePhoneInput(rawPhone);
       const occasion: ReservationOccasion = VALID_OCCASIONS.includes(
         body.occasion as ReservationOccasion,
       )
@@ -1009,8 +1014,10 @@ async function startServer(): Promise<void> {
     async (_req: Request, res: Response) => {
       try {
         const entries = await runSerialized(() => readAggregatorsFromDisk());
-        const sorted = [...entries].sort((a, b) =>
-          b.date.localeCompare(a.date) || b.createdAt.localeCompare(a.createdAt),
+        const sorted = [...entries].sort(
+          (a, b) =>
+            String(b.date || '').localeCompare(String(a.date || '')) ||
+            String(b.createdAt || '').localeCompare(String(a.createdAt || '')),
         );
         res.status(200).json({ entries: sorted });
       } catch (error) {

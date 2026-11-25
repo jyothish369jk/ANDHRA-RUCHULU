@@ -59,6 +59,17 @@ export function Navbar({
     };
   }, [moreMenuOpen]);
 
+  useEffect(() => {
+    if (!mobileMenuOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setMobileMenuOpen(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [mobileMenuOpen]);
+
   const handleNavClick = (id: NavSectionId) => {
     setMobileMenuOpen(false);
     setMoreMenuOpen(false);

@@ -649,6 +649,11 @@ export function OwnerPortalPage({
         return;
       }
 
+      if (response.status >= 500 && matchesClientPin) {
+        unlockLocalVercelSession();
+        return;
+      }
+
       const data = (await response.json()) as {
         token?: string;
         owner?: { email?: string };
@@ -749,7 +754,7 @@ export function OwnerPortalPage({
         return;
       }
       const contentType = res.headers.get('content-type') || '';
-      if (res.status === 404 && !contentType.includes('application/json')) {
+      if (res.status === 404 || !contentType.includes('application/json')) {
         const updatedLocal = localOrdersService.updateOrderStatus(
           orderId,
           nextStatus,
@@ -821,7 +826,7 @@ export function OwnerPortalPage({
         return;
       }
       const contentType = res.headers.get('content-type') || '';
-      if (res.status === 404 && !contentType.includes('application/json')) {
+      if (res.status === 404 || !contentType.includes('application/json')) {
         localOrdersService.deleteOrder(orderId);
         setOrders((prev) => prev.filter((ord) => ord.id !== orderId));
         setConfirmDeleteOrderId(null);
@@ -888,7 +893,7 @@ export function OwnerPortalPage({
         return;
       }
       const contentType = res.headers.get('content-type') || '';
-      if (res.status === 404 && !contentType.includes('application/json')) {
+      if (res.status === 404 || !contentType.includes('application/json')) {
         const updatedLocal = updateMyBookingStatusInStorage(
           bookingId,
           nextStatus,
@@ -963,7 +968,7 @@ export function OwnerPortalPage({
         return;
       }
       const contentType = res.headers.get('content-type') || '';
-      if (res.status === 404 && !contentType.includes('application/json')) {
+      if (res.status === 404 || !contentType.includes('application/json')) {
         removeMyBookingFromStorage(bookingId);
         setBookings((prev) => prev.filter((b) => b.id !== bookingId));
         setConfirmDeleteBookingId(null);
@@ -1283,7 +1288,12 @@ export function OwnerPortalPage({
               type="button"
               role="tab"
               aria-selected={activeAdminTab === 'orders'}
-              onClick={() => setActiveAdminTab('orders')}
+              onClick={() => {
+                setOpenBookingMenu(null);
+                setConfirmDeleteBookingId(null);
+                setConfirmDeleteOrderId(null);
+                setActiveAdminTab('orders');
+              }}
               className={`inline-flex min-h-[38px] cursor-pointer items-center gap-2 rounded-xl px-4 py-1.5 text-xs font-semibold transition-colors ${
                 activeAdminTab === 'orders'
                   ? 'bg-[#F59E0B] text-[#0B0C10]'
@@ -1307,7 +1317,12 @@ export function OwnerPortalPage({
               type="button"
               role="tab"
               aria-selected={activeAdminTab === 'bookings'}
-              onClick={() => setActiveAdminTab('bookings')}
+              onClick={() => {
+                setOpenBookingMenu(null);
+                setConfirmDeleteBookingId(null);
+                setConfirmDeleteOrderId(null);
+                setActiveAdminTab('bookings');
+              }}
               className={`inline-flex min-h-[38px] cursor-pointer items-center gap-2 rounded-xl px-4 py-1.5 text-xs font-semibold transition-colors ${
                 activeAdminTab === 'bookings'
                   ? 'bg-[#F59E0B] text-[#0B0C10]'
@@ -1331,7 +1346,12 @@ export function OwnerPortalPage({
               type="button"
               role="tab"
               aria-selected={activeAdminTab === 'analytics'}
-              onClick={() => setActiveAdminTab('analytics')}
+              onClick={() => {
+                setOpenBookingMenu(null);
+                setConfirmDeleteBookingId(null);
+                setConfirmDeleteOrderId(null);
+                setActiveAdminTab('analytics');
+              }}
               className={`inline-flex min-h-[38px] cursor-pointer items-center gap-2 rounded-xl px-4 py-1.5 text-xs font-semibold transition-colors ${
                 activeAdminTab === 'analytics'
                   ? 'bg-[#F8FAFC] text-[#0B0C10]'

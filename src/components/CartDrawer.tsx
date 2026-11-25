@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CheckCircle2,
@@ -62,12 +62,45 @@ export function CartDrawer({
     null,
   );
 
+  const handleClose = useCallback(() => {
+    setPlacedOrder(null);
+    onClose();
+  }, [onClose]);
+
+  useEffect(() => {
+    if (items.length > 0 && placedOrder) {
+      setPlacedOrder(null);
+    }
+  }, [items.length, placedOrder]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        handleClose();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, handleClose]);
+
   const subtotal = items.reduce(
     (sum, entry) => sum + entry.unitPriceInr * entry.quantity,
     0,
   );
   const taxes = Math.round(subtotal * 0.05);
   const grandTotal = subtotal + taxes;
+
+  const normalizePhoneDigits = (raw: string): string => {
+    const digits = raw.replace(/\D/g, '');
+    if (digits.length > 10 && digits.startsWith('91')) {
+      return digits.slice(-10);
+    }
+    if (digits.length === 11 && digits.startsWith('0')) {
+      return digits.slice(1);
+    }
+    return digits.slice(0, 10);
+  };
 
   const validateCheckout = (): boolean => {
     const nextErrors: CheckoutErrors = {};
@@ -76,7 +109,7 @@ export function CartDrawer({
       nextErrors.customerName = 'Please enter your name.';
     }
 
-    const cleanPhone = customerPhone.replace(/\D/g, '');
+    const cleanPhone = normalizePhoneDigits(customerPhone);
     if (cleanPhone.length !== 10) {
       nextErrors.customerPhone = 'Enter a valid 10-digit phone number.';
     }
@@ -128,7 +161,7 @@ export function CartDrawer({
     setIsSubmitting(true);
     setErrors({});
 
-    const cleanPhone = customerPhone.replace(/\D/g, '');
+    const cleanPhone = normalizePhoneDigits(customerPhone);
 
     const finalizeSuccess = (orderId: string, totalAmountInr: number) => {
       const whatsappUrl = buildOrderWhatsAppUrl(orderId, cleanPhone);
@@ -223,7 +256,7 @@ export function CartDrawer({
           exit={{ opacity: 0 }}
           transition={{ duration: 0.2 }}
           className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm"
-          onClick={onClose}
+          onClick={handleClose}
         >
           <motion.aside
             role="dialog"
@@ -246,10 +279,7 @@ export function CartDrawer({
               </div>
               <button
                 type="button"
-                onClick={() => {
-                  setPlacedOrder(null);
-                  onClose();
-                }}
+                onClick={handleClose}
                 aria-label="Close order drawer"
                 className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-white/12 text-[#94A3B8] transition-colors hover:border-white/25 hover:text-[#F8FAFC]"
               >
@@ -286,10 +316,7 @@ export function CartDrawer({
                     </a>
                     <button
                       type="button"
-                      onClick={() => {
-                        setPlacedOrder(null);
-                        onClose();
-                      }}
+                      onClick={handleClose}
                       className="min-h-[44px] w-full cursor-pointer rounded-xl bg-[#F59E0B] px-6 py-2.5 text-xs font-semibold text-[#0B0C10]"
                     >
                       Return to Menu
@@ -464,12 +491,10 @@ export function CartDrawer({
                           type="tel"
                           inputMode="numeric"
                           autoComplete="tel"
-                          maxLength={10}
+                          maxLength={16}
                           value={customerPhone}
                           onChange={(e) => {
-                            const digits = e.target.value
-                              .replace(/\D/g, '')
-                              .slice(0, 10);
+                            const digits = normalizePhoneDigits(e.target.value);
                             setCustomerPhone(digits);
                             if (errors.customerPhone) {
                               setErrors((prev) => ({ ...prev, customerPhone: undefined }));

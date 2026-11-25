@@ -1,4 +1,4 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import { Utensils } from 'lucide-react';
 
@@ -169,6 +169,10 @@ interface FoodImageProps {
 
 export function FoodImage({ src, alt, titleFallback, className = '' }: FoodImageProps) {
   const [hasError, setHasError] = useState(false);
+
+  useEffect(() => {
+    setHasError(false);
+  }, [src]);
 
   if (hasError) {
     return (

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CalendarCheck,
@@ -36,10 +36,21 @@ export function MyBookingsModal({
 }: MyBookingsModalProps) {
   const [confirmingRemoveId, setConfirmingRemoveId] = useState<string | null>(null);
 
-  const handleClose = () => {
+  const handleClose = useCallback(() => {
     setConfirmingRemoveId(null);
     onClose();
-  };
+  }, [onClose]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        handleClose();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, handleClose]);
 
   const handleFollowUp = (booking: TableBooking) => {
     const url = buildWhatsAppFollowUpUrl(booking);

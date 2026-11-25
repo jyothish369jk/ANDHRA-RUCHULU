@@ -157,6 +157,18 @@ export function AggregatorAnalyticsTab({
     loadEntries();
   }, [loadEntries]);
 
+  useEffect(() => {
+    if (!drawerOpen && !csvModalOpen) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        if (csvModalOpen) setCsvModalOpen(false);
+        else if (drawerOpen) setDrawerOpen(false);
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [drawerOpen, csvModalOpen]);
+
   const { filteredEntries, previousWindowEntries } = useMemo(() => {
     if (entries.length === 0) {
       return {
@@ -492,6 +504,7 @@ export function AggregatorAnalyticsTab({
 
   const handleCsvFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
+    e.target.value = '';
     if (!file) return;
     const reader = new FileReader();
     reader.onload = () => {
@@ -891,6 +904,28 @@ export function AggregatorAnalyticsTab({
                         strokeWidth="2.25"
                         strokeLinecap="round"
                       />
+
+                      {/* Single-day visible nodes (since 1-point paths have zero length) */}
+                      {dailyChartData.length === 1 && zomatoCoords[0] && swiggyCoords[0] && (
+                        <>
+                          <circle
+                            cx={zomatoCoords[0].x}
+                            cy={zomatoCoords[0].y}
+                            r="5"
+                            fill={ZOMATO_COLOR}
+                            stroke="#FFFFFF"
+                            strokeWidth="2"
+                          />
+                          <circle
+                            cx={swiggyCoords[0].x}
+                            cy={swiggyCoords[0].y}
+                            r="5"
+                            fill={SWIGGY_COLOR}
+                            stroke="#FFFFFF"
+                            strokeWidth="2"
+                          />
+                        </>
+                      )}
 
                       {/* Hover Hairline + Active Nodes */}
                       {hoveredIdx !== null && zomatoCoords[hoveredIdx] && (

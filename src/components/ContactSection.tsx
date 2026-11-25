@@ -91,7 +91,13 @@ export function ContactSection({
       errors.name = 'Please enter customer name.';
     }
 
-    const cleanDigits = phone.replace(/\D/g, '');
+    const digitsRaw = phone.replace(/\D/g, '');
+    const cleanDigits =
+      digitsRaw.length > 10 && digitsRaw.startsWith('91')
+        ? digitsRaw.slice(-10)
+        : digitsRaw.length === 11 && digitsRaw.startsWith('0')
+          ? digitsRaw.slice(1)
+          : digitsRaw;
     if (cleanDigits.length !== 10) {
       errors.phone = 'Please enter a valid 10-digit phone number.';
     }
@@ -124,7 +130,7 @@ export function ContactSection({
     if (Object.keys(errors).length > 0) return;
 
     const newBooking: TableBooking = {
-      id: `AR-${Date.now().toString().slice(-5)}`,
+      id: `AR-${Date.now().toString().slice(-5)}${Math.floor(10 + Math.random() * 89)}`,
       name: name.trim(),
       phone: cleanDigits,
       occasion,
@@ -376,12 +382,18 @@ export function ContactSection({
                         type="tel"
                         inputMode="numeric"
                         autoComplete="tel"
-                        maxLength={10}
+                        maxLength={16}
                         required
                         placeholder="9849000000"
                         value={phone}
                         onChange={(e) => {
-                          const digits = e.target.value.replace(/\D/g, '').slice(0, 10);
+                          const rawDigits = e.target.value.replace(/\D/g, '');
+                          const digits =
+                            rawDigits.length > 10 && rawDigits.startsWith('91')
+                              ? rawDigits.slice(-10)
+                              : rawDigits.length === 11 && rawDigits.startsWith('0')
+                                ? rawDigits.slice(1)
+                                : rawDigits.slice(0, 10);
                           setPhone(digits);
                           if (formErrors.phone) setFormErrors({ ...formErrors, phone: undefined });
                         }}

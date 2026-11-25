@@ -286,18 +286,50 @@ function parseNumericCurrency(raw: string | undefined): number {
   return Number.isFinite(num) ? Math.round(num) : NaN;
 }
 
+function isValidCalendarDate(year: number, month: number, day: number): boolean {
+  if (
+    !Number.isInteger(year) ||
+    !Number.isInteger(month) ||
+    !Number.isInteger(day) ||
+    year < 1900 ||
+    year > 2100 ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > 31
+  ) {
+    return false;
+  }
+  const probe = new Date(year, month - 1, day);
+  return (
+    probe.getFullYear() === year &&
+    probe.getMonth() === month - 1 &&
+    probe.getDate() === day
+  );
+}
+
 function normalizeDateString(raw: string | undefined): string | null {
   if (!raw) return null;
   const trimmed = raw.trim();
-  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    return trimmed;
+  const isoMatch = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (isoMatch) {
+    const year = Number(isoMatch[1]);
+    const month = Number(isoMatch[2]);
+    const day = Number(isoMatch[3]);
+    return isValidCalendarDate(year, month, day) ? trimmed : null;
   }
   const dmyMatch = trimmed.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
   if (dmyMatch) {
-    const day = dmyMatch[1].padStart(2, '0');
-    const month = dmyMatch[2].padStart(2, '0');
-    const year = dmyMatch[3];
-    return `${year}-${month}-${day}`;
+    const first = Number(dmyMatch[1]);
+    const second = Number(dmyMatch[2]);
+    const year = Number(dmyMatch[3]);
+    // Support DD/MM/YYYY by default, and auto-detect MM/DD/YYYY when second part > 12
+    const day = second > 12 && first <= 12 ? second : first;
+    const month = second > 12 && first <= 12 ? first : second;
+    if (!isValidCalendarDate(year, month, day)) {
+      return null;
+    }
+    return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
   }
   const parsed = new Date(trimmed);
   if (!Number.isNaN(parsed.getTime())) {
@@ -693,7 +725,7 @@ export const dataService = {
         const gross = Math.round(row.grossSalesInr);
         const ded = Math.round(row.deductionsInr);
         return {
-          id: `csv-${Date.now().toString(36)}-${idx}`,
+          id: `csv-${Date.now().toString(36)}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
           platform: row.platform,
           date: row.date,
           orders: Math.round(row.orders),

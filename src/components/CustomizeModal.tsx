@@ -35,6 +35,17 @@ export function CustomizeModal({ dish, onClose, onConfirmAdd }: CustomizeModalPr
     }
   }, [dish]);
 
+  useEffect(() => {
+    if (!dish) return;
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [dish, onClose]);
+
   const computedPrice = dish ? dish.priceInr + (portion.includes('180') ? 180 : 0) : 0;
 
   return (
