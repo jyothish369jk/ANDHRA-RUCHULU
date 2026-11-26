@@ -26,11 +26,8 @@ import type {
   TableBooking,
 } from './types/restaurant';
 import {
-  appendMyBookingToStorage,
-  BOOKINGS_STORAGE_KEY,
   BOOKINGS_UPDATED_EVENT,
-  loadMyBookingsFromStorage,
-  removeMyBookingFromStorage,
+  bookingsService,
 } from './utils/reservationsStorage';
 
 interface ToastState {
@@ -48,27 +45,38 @@ export default function App() {
   const [cartOpen, setCartOpen] = useState(false);
   const [customizingDish, setCustomizingDish] = useState<MenuItem | null>(null);
   const [myBookingsOpen, setMyBookingsOpen] = useState(false);
-  const [bookings, setBookings] = useState<TableBooking[]>(() => loadMyBookingsFromStorage());
+  const [bookings, setBookings] = useState<TableBooking[]>([]);
+  const [isLoadingBookings, setIsLoadingBookings] = useState(false);
+  const [bookingsError, setBookingsError] = useState<string | null>(null);
   const [mapsQuotaExceeded, setMapsQuotaExceeded] = useState(false);
   const [toast, setToast] = useState<ToastState | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 
-  useEffect(() => {
-    const syncBookings = () => {
-      setBookings(loadMyBookingsFromStorage());
-    };
-    const handleStorage = (event: StorageEvent) => {
-      if (!event.key || event.key === BOOKINGS_STORAGE_KEY) {
-        syncBookings();
-      }
-    };
-    window.addEventListener(BOOKINGS_UPDATED_EVENT, syncBookings);
-    window.addEventListener('storage', handleStorage);
-    return () => {
-      window.removeEventListener(BOOKINGS_UPDATED_EVENT, syncBookings);
-      window.removeEventListener('storage', handleStorage);
-    };
+  const refreshBookings = useCallback(async () => {
+    setIsLoadingBookings(true);
+    setBookingsError(null);
+    try {
+      const list = await bookingsService.listBookings();
+      setBookings(list);
+    } catch (err) {
+      setBookingsError(
+        err instanceof Error ? err.message : 'Unable to load reservations.',
+      );
+    } finally {
+      setIsLoadingBookings(false);
+    }
   }, []);
+
+  useEffect(() => {
+    void refreshBookings();
+    const handleBookingsUpdated = () => {
+      void refreshBookings();
+    };
+    window.addEventListener(BOOKINGS_UPDATED_EVENT, handleBookingsUpdated);
+    return () => {
+      window.removeEventListener(BOOKINGS_UPDATED_EVENT, handleBookingsUpdated);
+    };
+  }, [refreshBookings]);
 
   useEffect(() => {
     const syncRoute = () => {
@@ -215,19 +223,51 @@ export default function App() {
   }, []);
 
   const handleBookingCreated = useCallback((newBooking: TableBooking) => {
-    const updated = appendMyBookingToStorage(newBooking);
-    setBookings(updated);
+    setBookings((prev) => [
+      newBooking,
+      ...prev.filter((item) => item.id !== newBooking.id),
+    ]);
   }, []);
 
-  const handleRemoveMyBooking = useCallback((id: string) => {
-    const updated = removeMyBookingFromStorage(id);
-    setBookings(updated);
-  }, []);
+  const handleRemoveMyBooking = useCallback(
+    async (id: string) => {
+      try {
+        await bookingsService.deleteBooking(id);
+        setBookings((prev) => prev.filter((item) => item.id !== id));
+      } catch (err) {
+        showToast(
+          'Delete Failed',
+          err instanceof Error ? err.message : 'Could not delete reservation.',
+        );
+      }
+    },
+    [showToast],
+  );
+
+  const handleCancelMyBooking = useCallback(
+    async (id: string) => {
+      try {
+        const updated = await bookingsService.updateBookingStatus(
+          id,
+          'Cancelled',
+        );
+        setBookings((prev) =>
+          prev.map((item) => (item.id === id ? updated : item)),
+        );
+      } catch (err) {
+        showToast(
+          'Cancel Failed',
+          err instanceof Error ? err.message : 'Could not cancel reservation.',
+        );
+      }
+    },
+    [showToast],
+  );
 
   const openMyBookings = useCallback(() => {
-    setBookings(loadMyBookingsFromStorage());
     setMyBookingsOpen(true);
-  }, []);
+    void refreshBookings();
+  }, [refreshBookings]);
 
   const totalItemCount = cartItems.reduce((sum, entry) => sum + entry.quantity, 0);
 
@@ -319,9 +359,13 @@ export default function App() {
             <MyBookingsModal
               isOpen={myBookingsOpen}
               bookings={bookings}
+              isLoading={isLoadingBookings}
+              errorMessage={bookingsError}
+              onRetry={() => void refreshBookings()}
               onClose={() => setMyBookingsOpen(false)}
               onReserveNow={() => scrollToSection('contact')}
-              onRemoveBooking={handleRemoveMyBooking}
+              onRemoveBooking={(id) => void handleRemoveMyBooking(id)}
+              onCancelBooking={(id) => void handleCancelMyBooking(id)}
               onShowToast={showToast}
             />
           </>

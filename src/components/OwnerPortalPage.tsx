@@ -34,30 +34,25 @@ import type {
 } from '../types/restaurant';
 import {
   getExpectedAdminPin,
-  LOCAL_ORDERS_STORAGE_KEY,
   LOCAL_VERCEL_SESSION_TOKEN,
-  localOrdersService,
   ORDERS_UPDATED_EVENT,
-  sanitizeCustomerOrder,
+  ordersService,
 } from '../services/dataService';
 import {
-  BOOKINGS_STORAGE_KEY,
   BOOKINGS_UPDATED_EVENT,
+  bookingsService,
   formatDisplayDateTime,
-  loadMyBookingsFromStorage,
-  removeMyBookingFromStorage,
-  sanitizeTableBooking,
-  updateMyBookingStatusInStorage,
 } from '../utils/reservationsStorage';
+import { supabase } from '../lib/supabase';
 import { AggregatorAnalyticsTab } from './AggregatorAnalyticsTab';
 import { BrandEmblem } from './InteractivePrimitives';
 
 const OWNER_SESSION_KEY = 'ar_owner_session_token';
 const ADMIN_AUTH_FLAG_KEY = 'isAdminAuthenticated';
-const BOOKINGS_MIGRATED_KEY = 'ar_bookings_migrated_v1';
 const AUTHORIZED_OWNER_EMAIL = 'jyothish369k@gmail.com';
 
 const ORDER_STATUS_OPTIONS: OrderStatus[] = [
+  'New',
   'Pending',
   'Preparing',
   'Delivered',
@@ -124,6 +119,8 @@ interface OwnerPortalPageProps {
 
 function getOrderStatusTone(status: OrderStatus): string {
   switch (status) {
+    case 'New':
+      return 'border-amber-400/45 bg-amber-400/15 text-amber-300';
     case 'Pending':
       return 'border-[#F59E0B]/40 bg-[#F59E0B]/12 text-[#F59E0B]';
     case 'Preparing':
@@ -222,6 +219,7 @@ export function OwnerPortalPage({
   const [activeAdminTab, setActiveAdminTab] = useState<
     'orders' | 'bookings' | 'analytics'
   >('orders');
+  const [analyticsRefreshKey, setAnalyticsRefreshKey] = useState(0);
 
   // Orders State
   const [orders, setOrders] = useState<CustomerOrder[]>([]);
@@ -311,49 +309,20 @@ export function OwnerPortalPage({
   }, []);
 
   const fetchOwnerOrders = useCallback(
-    async (token: string, silent = false) => {
+    async (_token: string, silent = false) => {
       setIsLoadingOrders(true);
       setOrdersError(null);
       try {
-        if (token === LOCAL_VERCEL_SESSION_TOKEN) {
-          setOrders(localOrdersService.listOrders());
-          if (!silent) {
-            onShowToast('Orders Refreshed', 'Loaded the latest customer orders.');
-          }
-          return;
-        }
-
-        const res = await fetch('/api/admin/orders', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.status === 401) {
-          clearSession();
-          return;
-        }
-        const contentType = res.headers.get('content-type') || '';
-        if (res.status === 404 || !contentType.includes('application/json')) {
-          setOrders(localOrdersService.listOrders());
-          return;
-        }
-        const data = (await res.json()) as {
-          orders?: unknown[];
-          error?: string;
-        };
-        if (!res.ok) {
-          throw new Error(data.error || 'Failed to load orders.');
-        }
-        const sanitizedOrders = Array.isArray(data.orders)
-          ? data.orders
-              .map(sanitizeCustomerOrder)
-              .filter((ord): ord is CustomerOrder => ord !== null)
-          : [];
-        setOrders(sanitizedOrders);
+        const liveOrders = await ordersService.listOrders();
+        setOrders(liveOrders);
         if (!silent) {
           onShowToast('Orders Refreshed', 'Loaded the latest customer orders.');
         }
       } catch (err) {
         const message =
-          err instanceof Error ? err.message : 'Unable to load customer orders.';
+          err instanceof Error
+            ? err.message
+            : 'Unable to load customer orders.';
         setOrdersError(message);
         if (!silent) {
           onShowToast('Orders Refresh Failed', message);
@@ -362,78 +331,16 @@ export function OwnerPortalPage({
         setIsLoadingOrders(false);
       }
     },
-    [clearSession, onShowToast],
+    [onShowToast],
   );
 
   const fetchOwnerBookings = useCallback(
-    async (token: string, silent = false) => {
+    async (_token: string, silent = false) => {
       setIsLoadingBookings(true);
       setBookingsError(null);
       try {
-        if (token === LOCAL_VERCEL_SESSION_TOKEN) {
-          setBookings(loadMyBookingsFromStorage());
-          if (!silent) {
-            onShowToast(
-              'Bookings Refreshed',
-              'Loaded the latest table reservations.',
-            );
-          }
-          return;
-        }
-
-        // One-time sync for any bookings created in localStorage before backend sync
-        let migratedFlag = false;
-        try {
-          migratedFlag =
-            window.localStorage.getItem(BOOKINGS_MIGRATED_KEY) === 'true';
-        } catch {
-          migratedFlag = true;
-        }
-        if (!migratedFlag) {
-          const localExisting = loadMyBookingsFromStorage();
-          if (localExisting.length > 0) {
-            await Promise.allSettled(
-              localExisting.map((b) =>
-                fetch('/api/bookings', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify(b),
-                }),
-              ),
-            );
-          }
-          try {
-            window.localStorage.setItem(BOOKINGS_MIGRATED_KEY, 'true');
-          } catch {
-            // Ignore storage errors
-          }
-        }
-
-        const res = await fetch('/api/admin/bookings', {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        if (res.status === 401) {
-          clearSession();
-          return;
-        }
-        const contentType = res.headers.get('content-type') || '';
-        if (res.status === 404 || !contentType.includes('application/json')) {
-          setBookings(loadMyBookingsFromStorage());
-          return;
-        }
-        const data = (await res.json()) as {
-          bookings?: unknown[];
-          error?: string;
-        };
-        if (!res.ok) {
-          throw new Error(data.error || 'Failed to load table bookings.');
-        }
-        const sanitizedBookings = Array.isArray(data.bookings)
-          ? data.bookings
-              .map(sanitizeTableBooking)
-              .filter((b): b is TableBooking => b !== null)
-          : [];
-        setBookings(sanitizedBookings);
+        const liveBookings = await bookingsService.listBookings();
+        setBookings(liveBookings);
         if (!silent) {
           onShowToast(
             'Bookings Refreshed',
@@ -453,7 +360,7 @@ export function OwnerPortalPage({
         setIsLoadingBookings(false);
       }
     },
-    [clearSession, onShowToast],
+    [onShowToast],
   );
 
   // Re-verify persisted sessionStorage token on mount
@@ -559,35 +466,46 @@ export function OwnerPortalPage({
     };
   }, [sessionToken, clearSession, fetchOwnerOrders, fetchOwnerBookings]);
 
-  // Keep Admin Portal synced when orders or bookings change in another tab/window
+  // Keep Admin Portal synced with live Supabase updates & local events
   useEffect(() => {
     if (!sessionToken || verifiedEmail !== AUTHORIZED_OWNER_EMAIL) return;
 
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key === LOCAL_ORDERS_STORAGE_KEY) {
-        void fetchOwnerOrders(sessionToken, true);
-      } else if (event.key === BOOKINGS_STORAGE_KEY) {
-        void fetchOwnerBookings(sessionToken, true);
-      }
-    };
     const handleOrdersUpdated = () => {
-      if (sessionToken === LOCAL_VERCEL_SESSION_TOKEN) {
-        setOrders(localOrdersService.listOrders());
-      }
+      void fetchOwnerOrders(sessionToken, true);
     };
     const handleBookingsUpdated = () => {
-      if (sessionToken === LOCAL_VERCEL_SESSION_TOKEN) {
-        setBookings(loadMyBookingsFromStorage());
-      }
+      void fetchOwnerBookings(sessionToken, true);
     };
 
-    window.addEventListener('storage', handleStorage);
     window.addEventListener(ORDERS_UPDATED_EVENT, handleOrdersUpdated);
     window.addEventListener(BOOKINGS_UPDATED_EVENT, handleBookingsUpdated);
+
+    const channel = supabase
+      ? supabase
+          .channel('admin-portal-live-sync')
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'customer_orders' },
+            () => {
+              void fetchOwnerOrders(sessionToken, true);
+            },
+          )
+          .on(
+            'postgres_changes',
+            { event: '*', schema: 'public', table: 'table_bookings' },
+            () => {
+              void fetchOwnerBookings(sessionToken, true);
+            },
+          )
+          .subscribe()
+      : null;
+
     return () => {
-      window.removeEventListener('storage', handleStorage);
       window.removeEventListener(ORDERS_UPDATED_EVENT, handleOrdersUpdated);
       window.removeEventListener(BOOKINGS_UPDATED_EVENT, handleBookingsUpdated);
+      if (channel && supabase) {
+        void supabase.removeChannel(channel);
+      }
     };
   }, [sessionToken, verifiedEmail, fetchOwnerOrders, fetchOwnerBookings]);
 
@@ -713,7 +631,7 @@ export function OwnerPortalPage({
     onShowToast('Logged Out', 'Your owner admin session has been closed.');
   };
 
-  // Order CRUD Handlers
+  // Order CRUD Handlers (Supabase customer_orders)
   const handleOrderStatusChange = async (
     orderId: string,
     nextStatus: OrderStatus,
@@ -721,77 +639,21 @@ export function OwnerPortalPage({
     if (!sessionToken || updatingOrderId === orderId) return;
     setUpdatingOrderId(orderId);
     try {
-      if (sessionToken === LOCAL_VERCEL_SESSION_TOKEN) {
-        const updatedLocal = localOrdersService.updateOrderStatus(
-          orderId,
-          nextStatus,
-        );
-        if (!updatedLocal) {
-          onShowToast('Update Failed', `Order #${orderId} could not be found.`);
-          return;
-        }
-        setOrders(localOrdersService.listOrders());
-        onShowToast(
-          'Status Updated',
-          `Order #${orderId} marked as ${nextStatus}.`,
-        );
-        return;
-      }
-
-      const res = await fetch(
-        `/api/admin/orders/${encodeURIComponent(orderId)}`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${sessionToken}`,
-          },
-          body: JSON.stringify({ status: nextStatus }),
-        },
-      );
-      if (res.status === 401) {
-        clearSession();
-        return;
-      }
-      const contentType = res.headers.get('content-type') || '';
-      if (res.status === 404 || !contentType.includes('application/json')) {
-        const updatedLocal = localOrdersService.updateOrderStatus(
-          orderId,
-          nextStatus,
-        );
-        if (!updatedLocal) {
-          onShowToast('Update Failed', `Order #${orderId} could not be found.`);
-          return;
-        }
-        setOrders(localOrdersService.listOrders());
-        onShowToast(
-          'Status Updated',
-          `Order #${orderId} marked as ${nextStatus}.`,
-        );
-        return;
-      }
-      const data = (await res.json()) as {
-        order?: CustomerOrder;
-        error?: string;
-      };
-      const sanitizedUpdated = sanitizeCustomerOrder(data.order);
-      if (!res.ok || !sanitizedUpdated) {
-        onShowToast(
-          'Update Failed',
-          data.error || 'Could not update order status.',
-        );
-        return;
-      }
-
+      const updated = await ordersService.updateOrderStatus(orderId, nextStatus);
       setOrders((prev) =>
-        prev.map((ord) => (ord.id === orderId ? sanitizedUpdated : ord)),
+        prev.map((ord) => (ord.id === orderId ? updated : ord)),
       );
       onShowToast(
         'Status Updated',
         `Order #${orderId} marked as ${nextStatus}.`,
       );
-    } catch {
-      onShowToast('Update Failed', 'Network error updating order status.');
+    } catch (err) {
+      onShowToast(
+        'Update Failed',
+        err instanceof Error
+          ? err.message
+          : 'Could not update order status in Supabase.',
+      );
     } finally {
       setUpdatingOrderId(null);
     }
@@ -801,55 +663,23 @@ export function OwnerPortalPage({
     if (!sessionToken || deletingOrderId === orderId) return;
     setDeletingOrderId(orderId);
     try {
-      if (sessionToken === LOCAL_VERCEL_SESSION_TOKEN) {
-        const deleted = localOrdersService.deleteOrder(orderId);
-        if (!deleted) {
-          onShowToast('Delete Failed', `Order #${orderId} was already removed.`);
-          setOrders(localOrdersService.listOrders());
-          return;
-        }
-        setOrders((prev) => prev.filter((ord) => ord.id !== orderId));
-        setConfirmDeleteOrderId(null);
-        onShowToast('Order Deleted', `Removed order #${orderId}.`);
-        return;
-      }
-
-      const res = await fetch(
-        `/api/admin/orders/${encodeURIComponent(orderId)}`,
-        {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${sessionToken}` },
-        },
-      );
-      if (res.status === 401) {
-        clearSession();
-        return;
-      }
-      const contentType = res.headers.get('content-type') || '';
-      if (res.status === 404 || !contentType.includes('application/json')) {
-        localOrdersService.deleteOrder(orderId);
-        setOrders((prev) => prev.filter((ord) => ord.id !== orderId));
-        setConfirmDeleteOrderId(null);
-        onShowToast('Order Deleted', `Removed order #${orderId}.`);
-        return;
-      }
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) {
-        onShowToast('Delete Failed', data.error || 'Could not delete order.');
-        return;
-      }
-      localOrdersService.deleteOrder(orderId);
+      await ordersService.deleteOrder(orderId);
       setOrders((prev) => prev.filter((ord) => ord.id !== orderId));
       setConfirmDeleteOrderId(null);
       onShowToast('Order Deleted', `Removed order #${orderId}.`);
-    } catch {
-      onShowToast('Delete Failed', 'Network error deleting order.');
+    } catch (err) {
+      onShowToast(
+        'Delete Failed',
+        err instanceof Error
+          ? err.message
+          : 'Could not delete order from Supabase.',
+      );
     } finally {
       setDeletingOrderId(null);
     }
   };
 
-  // Booking CRUD Handlers
+  // Booking CRUD Handlers (Supabase table_bookings)
   const handleBookingStatusChange = async (
     bookingId: string,
     nextStatus: BookingStatus,
@@ -857,87 +687,23 @@ export function OwnerPortalPage({
     if (!sessionToken || updatingBookingId === bookingId) return;
     setUpdatingBookingId(bookingId);
     try {
-      if (sessionToken === LOCAL_VERCEL_SESSION_TOKEN) {
-        const updatedLocal = updateMyBookingStatusInStorage(
-          bookingId,
-          nextStatus,
-        );
-        if (!updatedLocal) {
-          onShowToast(
-            'Update Failed',
-            `Booking #${bookingId} could not be found.`,
-          );
-          return;
-        }
-        setBookings(loadMyBookingsFromStorage());
-        onShowToast(
-          'Reservation Updated',
-          `Booking ${bookingId} marked as ${getBookingStatusShortLabel(nextStatus)}.`,
-        );
-        return;
-      }
-
-      const res = await fetch(
-        `/api/admin/bookings/${encodeURIComponent(bookingId)}`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${sessionToken}`,
-          },
-          body: JSON.stringify({ status: nextStatus }),
-        },
+      const updated = await bookingsService.updateBookingStatus(
+        bookingId,
+        nextStatus,
       );
-      if (res.status === 401) {
-        clearSession();
-        return;
-      }
-      const contentType = res.headers.get('content-type') || '';
-      if (res.status === 404 || !contentType.includes('application/json')) {
-        const updatedLocal = updateMyBookingStatusInStorage(
-          bookingId,
-          nextStatus,
-        );
-        if (!updatedLocal) {
-          onShowToast(
-            'Update Failed',
-            `Booking #${bookingId} could not be found.`,
-          );
-          return;
-        }
-        setBookings(loadMyBookingsFromStorage());
-        onShowToast(
-          'Reservation Updated',
-          `Booking ${bookingId} marked as ${getBookingStatusShortLabel(nextStatus)}.`,
-        );
-        return;
-      }
-      const data = (await res.json()) as {
-        booking?: unknown;
-        error?: string;
-      };
-      const sanitizedUpdated = sanitizeTableBooking(data.booking);
-      if (!res.ok || !sanitizedUpdated) {
-        onShowToast(
-          'Update Failed',
-          data.error || 'Could not update reservation status.',
-        );
-        return;
-      }
-
-      // Sync local guest drawer copy if present on this device
-      updateMyBookingStatusInStorage(bookingId, nextStatus);
       setBookings((prev) =>
-        prev.map((b) => (b.id === bookingId ? sanitizedUpdated : b)),
+        prev.map((b) => (b.id === bookingId ? updated : b)),
       );
       onShowToast(
         'Reservation Updated',
-        `Booking ${bookingId} marked as ${getBookingStatusShortLabel(nextStatus)}.`,
+        `Booking #${bookingId} marked as ${getBookingStatusShortLabel(nextStatus)}.`,
       );
-    } catch {
+    } catch (err) {
       onShowToast(
         'Update Failed',
-        'Network error updating reservation status.',
+        err instanceof Error
+          ? err.message
+          : 'Could not update reservation status in Supabase.',
       );
     } finally {
       setUpdatingBookingId(null);
@@ -948,53 +714,23 @@ export function OwnerPortalPage({
     if (!sessionToken || deletingBookingId === bookingId) return;
     setDeletingBookingId(bookingId);
     try {
-      if (sessionToken === LOCAL_VERCEL_SESSION_TOKEN) {
-        removeMyBookingFromStorage(bookingId);
-        setBookings((prev) => prev.filter((b) => b.id !== bookingId));
-        setConfirmDeleteBookingId(null);
-        onShowToast('Reservation Deleted', `Removed booking ${bookingId}.`);
-        return;
-      }
-
-      const res = await fetch(
-        `/api/admin/bookings/${encodeURIComponent(bookingId)}`,
-        {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${sessionToken}` },
-        },
-      );
-      if (res.status === 401) {
-        clearSession();
-        return;
-      }
-      const contentType = res.headers.get('content-type') || '';
-      if (res.status === 404 || !contentType.includes('application/json')) {
-        removeMyBookingFromStorage(bookingId);
-        setBookings((prev) => prev.filter((b) => b.id !== bookingId));
-        setConfirmDeleteBookingId(null);
-        onShowToast('Reservation Deleted', `Removed booking ${bookingId}.`);
-        return;
-      }
-      const data = (await res.json().catch(() => ({}))) as { error?: string };
-      if (!res.ok) {
-        onShowToast(
-          'Delete Failed',
-          data.error || 'Could not delete reservation.',
-        );
-        return;
-      }
-      removeMyBookingFromStorage(bookingId);
+      await bookingsService.deleteBooking(bookingId);
       setBookings((prev) => prev.filter((b) => b.id !== bookingId));
       setConfirmDeleteBookingId(null);
-      onShowToast('Reservation Deleted', `Removed booking ${bookingId}.`);
-    } catch {
-      onShowToast('Delete Failed', 'Network error deleting reservation.');
+      onShowToast('Reservation Deleted', `Removed booking #${bookingId}.`);
+    } catch (err) {
+      onShowToast(
+        'Delete Failed',
+        err instanceof Error
+          ? err.message
+          : 'Could not delete reservation from Supabase.',
+      );
     } finally {
       setDeletingBookingId(null);
     }
   };
 
-  // Derived Summaries (always synchronized with state)
+  // Derived Summaries (always synchronized with live Supabase rows)
   const orderSummary = useMemo(
     () => ({
       totalOrders: orders.length,
@@ -1004,7 +740,10 @@ export function OwnerPortalPage({
         0,
       ),
       pendingActiveCount: orders.filter(
-        (ord) => ord.status === 'Pending' || ord.status === 'Preparing',
+        (ord) =>
+          ord.status === 'New' ||
+          ord.status === 'Pending' ||
+          ord.status === 'Preparing',
       ).length,
     }),
     [orders],
@@ -1078,11 +817,12 @@ export function OwnerPortalPage({
     } else if (activeAdminTab === 'orders') {
       void fetchOwnerOrders(sessionToken, false);
     } else {
+      setAnalyticsRefreshKey((k) => k + 1);
       void Promise.all([
         fetchOwnerOrders(sessionToken, true),
         fetchOwnerBookings(sessionToken, true),
       ]);
-      onShowToast('Synced', 'Refreshed portal counts and session.');
+      onShowToast('Synced', 'Refreshed live delivery analytics and counts.');
     }
   };
 
@@ -1367,6 +1107,7 @@ export function OwnerPortalPage({
         {activeAdminTab === 'analytics' ? (
           <AggregatorAnalyticsTab
             sessionToken={sessionToken}
+            refreshKey={analyticsRefreshKey}
             onUnauthorized={clearSession}
             onShowToast={onShowToast}
           />

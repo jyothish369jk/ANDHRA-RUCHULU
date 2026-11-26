@@ -2,10 +2,36 @@ import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import fs from 'fs';
 import path from 'path';
-import {defineConfig} from 'vite';
+import {defineConfig, loadEnv} from 'vite';
 
-export default defineConfig(() => {
+export default defineConfig(({mode}) => {
+  const env = loadEnv(mode, '.', '');
+  const cleanEnv = (val: string | undefined): string =>
+    String(val ?? '')
+      .trim()
+      .replace(/^['"]+|['"]+$/g, '')
+      .trim();
+
+  const viteSupabaseUrl = cleanEnv(
+    process.env.VITE_SUPABASE_URL ||
+      env.VITE_SUPABASE_URL ||
+      process.env.SUPABASE_URL ||
+      env.SUPABASE_URL,
+  );
+  const viteSupabaseAnonKey = cleanEnv(
+    process.env.VITE_SUPABASE_ANON_KEY ||
+      env.VITE_SUPABASE_ANON_KEY ||
+      process.env.SUPABASE_ANON_KEY ||
+      env.SUPABASE_ANON_KEY,
+  );
+
   return {
+    define: {
+      'import.meta.env.VITE_SUPABASE_URL': JSON.stringify(viteSupabaseUrl),
+      'import.meta.env.VITE_SUPABASE_ANON_KEY': JSON.stringify(
+        viteSupabaseAnonKey,
+      ),
+    },
     plugins: [
       react(),
       tailwindcss(),

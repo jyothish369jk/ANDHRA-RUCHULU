@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
+  AlertCircle,
   CalendarCheck,
   Clock,
+  Loader2,
   MessageCircle,
   Phone,
+  RefreshCw,
   Trash2,
   User,
   Users,
@@ -20,18 +23,26 @@ import {
 interface MyBookingsModalProps {
   isOpen: boolean;
   bookings: TableBooking[];
+  isLoading?: boolean;
+  errorMessage?: string | null;
+  onRetry?: () => void;
   onClose: () => void;
   onReserveNow: () => void;
   onRemoveBooking: (id: string) => void;
+  onCancelBooking: (id: string) => void;
   onShowToast: (title: string, description: string) => void;
 }
 
 export function MyBookingsModal({
   isOpen,
   bookings,
+  isLoading = false,
+  errorMessage = null,
+  onRetry,
   onClose,
   onReserveNow,
   onRemoveBooking,
+  onCancelBooking,
   onShowToast,
 }: MyBookingsModalProps) {
   const [confirmingRemoveId, setConfirmingRemoveId] = useState<string | null>(null);
@@ -64,11 +75,11 @@ export function MyBookingsModal({
   const handleCancelViaWhatsApp = (booking: TableBooking) => {
     const url = buildWhatsAppCancelUrl(booking);
     window.open(url, '_blank', 'noopener,noreferrer');
-    onRemoveBooking(booking.id);
+    onCancelBooking(booking.id);
     setConfirmingRemoveId(null);
     onShowToast(
-      'Cancellation Sent & Removed',
-      `Opened WhatsApp cancellation for ${booking.id} and removed it from My Bookings.`,
+      'Cancellation Sent',
+      `Marked #${booking.id} as Cancelled and opened WhatsApp.`,
     );
   };
 
@@ -102,25 +113,68 @@ export function MyBookingsModal({
                   <h2 className="font-serif text-2xl font-semibold text-[#F8FAFC]">
                     My Reservations
                   </h2>
-                  <p className="text-xs text-[#94A3B8]">
-                    Saved locally on this device ({bookings.length})
+                  <p className="text-xs text-[#94A3B8] tabular-nums">
+                    Live bookings ({bookings.length})
                   </p>
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={handleClose}
-                aria-label="Close My Reservations"
-                className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-white/12 text-[#94A3B8] transition-colors hover:border-white/25 hover:text-[#F8FAFC]"
-              >
-                <X className="h-4 w-4" />
-              </button>
+              <div className="flex items-center gap-2">
+                {onRetry && (
+                  <button
+                    type="button"
+                    onClick={onRetry}
+                    disabled={isLoading}
+                    aria-label="Refresh reservations"
+                    className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-white/12 text-[#94A3B8] transition-colors hover:border-[#F59E0B]/45 hover:text-[#F59E0B] disabled:opacity-50"
+                  >
+                    <RefreshCw
+                      className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`}
+                      aria-hidden="true"
+                    />
+                  </button>
+                )}
+
+                <button
+                  type="button"
+                  onClick={handleClose}
+                  aria-label="Close My Reservations"
+                  className="flex h-10 w-10 cursor-pointer items-center justify-center rounded-full border border-white/12 text-[#94A3B8] transition-colors hover:border-white/25 hover:text-[#F8FAFC]"
+                >
+                  <X className="h-4 w-4" />
+                </button>
+              </div>
             </div>
 
             {/* Body */}
             <div className="my-4 flex-1 overflow-y-auto pr-1">
-              {bookings.length === 0 ? (
+              {errorMessage && (
+                <div
+                  role="alert"
+                  className="mb-4 flex items-center justify-between gap-2 rounded-xl border border-[#DC2626]/40 bg-[#DC2626]/12 px-3.5 py-2.5 text-xs text-[#FCA5A5]"
+                >
+                  <span className="inline-flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span>{errorMessage}</span>
+                  </span>
+                  {onRetry && (
+                    <button
+                      type="button"
+                      onClick={onRetry}
+                      className="cursor-pointer rounded-lg border border-white/15 bg-white/10 px-2.5 py-1 font-semibold text-[#F8FAFC]"
+                    >
+                      Retry
+                    </button>
+                  )}
+                </div>
+              )}
+
+              {isLoading && bookings.length === 0 ? (
+                <div className="flex h-full items-center justify-center gap-3 py-16 text-sm text-[#94A3B8]">
+                  <Loader2 className="h-5 w-5 animate-spin text-[#F59E0B]" aria-hidden="true" />
+                  <span>Loading reservations...</span>
+                </div>
+              ) : bookings.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center rounded-2xl border border-white/10 bg-white/[0.02] p-8 text-center">
                   <div className="flex h-12 w-12 items-center justify-center rounded-full border border-[#F59E0B]/30 bg-[#F59E0B]/10 text-[#F59E0B]">
                     <CalendarCheck className="h-6 w-6" aria-hidden="true" />
@@ -129,7 +183,7 @@ export function MyBookingsModal({
                     You have no table reservations yet
                   </h3>
                   <p className="mt-2 max-w-xs text-sm leading-relaxed text-[#94A3B8]">
-                    Reserve a table at least 24 hours in advance and your WhatsApp requests will
+                    Reserve a table at least 24 hours in advance and your bookings will
                     appear right here.
                   </p>
                   <button
@@ -169,7 +223,7 @@ export function MyBookingsModal({
                             }`}
                           >
                             {booking.status === 'Sent via WhatsApp (Awaiting Reply)'
-                              ? 'Pending · Sent via WhatsApp'
+                              ? 'Pending'
                               : booking.status}
                           </span>
                         </div>
@@ -184,8 +238,8 @@ export function MyBookingsModal({
                             <p className="text-sm font-semibold text-[#F8FAFC] tabular-nums">
                               {formatDisplayDateTime(booking.dateTime)}
                             </p>
-                            <p className="mt-0.5 text-[11px] text-[#94A3B8]">
-                              Ref {booking.id} · Booked {formatDisplayDateTime(booking.bookedAt)}
+                            <p className="mt-0.5 text-[11px] text-[#94A3B8] tabular-nums">
+                              Ref #{booking.id} · Booked {formatDisplayDateTime(booking.bookedAt)}
                             </p>
                           </div>
                         </div>
@@ -213,7 +267,7 @@ export function MyBookingsModal({
                         {isConfirming ? (
                           <div className="mt-4 space-y-2 rounded-xl border border-white/12 bg-white/[0.03] p-3">
                             <p className="text-xs font-medium text-[#F8FAFC]">
-                              Remove this booking from your device or notify the restaurant?
+                              Delete this reservation or cancel it via WhatsApp?
                             </p>
                             <div className="flex flex-wrap items-center gap-2">
                               <button
@@ -222,13 +276,13 @@ export function MyBookingsModal({
                                   onRemoveBooking(booking.id);
                                   setConfirmingRemoveId(null);
                                   onShowToast(
-                                    'Booking Removed',
-                                    'Deleted reservation from My Bookings.',
+                                    'Booking Deleted',
+                                    'Removed reservation from table_bookings.',
                                   );
                                 }}
                                 className="min-h-[38px] flex-1 cursor-pointer rounded-lg bg-[#DC2626] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#EF4444]"
                               >
-                                Remove Only
+                                Delete
                               </button>
                               <button
                                 type="button"

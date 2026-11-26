@@ -6,6 +6,7 @@ import {
   CheckCircle2,
   Clock,
   ExternalLink,
+  Loader2,
   Mail,
   MapPin,
   MessageCircle,
@@ -16,6 +17,7 @@ import {
 import { RESTAURANT_LOCATION } from '../data/menuData';
 import type { ReservationOccasion, TableBooking } from '../types/restaurant';
 import {
+  bookingsService,
   buildWhatsAppBookingUrl,
   formatDisplayDateTime,
   getDefaultBookingDateTime,
@@ -46,6 +48,7 @@ interface FormErrors {
   occasion?: string;
   guests?: string;
   dateTime?: string;
+  submit?: string;
 }
 
 export function ContactSection({
@@ -69,6 +72,7 @@ export function ContactSection({
   const [guests, setGuests] = useState<number>(2);
   const [dateTime, setDateTime] = useState<string>(() => getDefaultBookingDateTime());
   const [formErrors, setFormErrors] = useState<FormErrors>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const [confirmedState, setConfirmedState] = useState<{
     booking: TableBooking;
@@ -79,8 +83,9 @@ export function ContactSection({
     setMinDateTime(getMinAdvanceDateTime());
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
 
     const freshMinStr = getMinAdvanceDateTime();
     setMinDateTime(freshMinStr);
@@ -129,35 +134,41 @@ export function ContactSection({
     setFormErrors(errors);
     if (Object.keys(errors).length > 0) return;
 
-    const newBooking: TableBooking = {
-      id: `AR-${Date.now().toString().slice(-5)}${Math.floor(10 + Math.random() * 89)}`,
-      name: name.trim(),
-      phone: cleanDigits,
-      occasion,
-      guests,
-      dateTime,
-      bookedAt: new Date().toISOString(),
-      status: 'Sent via WhatsApp (Awaiting Reply)',
-      locationName: activeLocation.neighborhood,
-    };
+    setIsSubmitting(true);
+    try {
+      const savedBooking = await bookingsService.createBooking({
+        name: name.trim(),
+        phone: cleanDigits,
+        occasion,
+        guests,
+        dateTime,
+      });
 
-    onBookingCreated(newBooking);
+      const bookingWithLocation: TableBooking = {
+        ...savedBooking,
+        locationName: savedBooking.locationName || activeLocation.neighborhood,
+      };
 
-    // Best-effort sync to Express backend (transparent fallback to localStorage on static hosts)
-    void fetch('/api/bookings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(newBooking),
-    }).catch(() => undefined);
+      onBookingCreated(bookingWithLocation);
 
-    const whatsappUrl = buildWhatsAppBookingUrl(newBooking);
-    window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
+      const whatsappUrl = buildWhatsAppBookingUrl(bookingWithLocation);
+      window.open(whatsappUrl, '_blank', 'noopener,noreferrer');
 
-    setConfirmedState({ booking: newBooking, whatsappUrl });
-    onShowToast(
-      'Saved to My Bookings',
-      'Your table request was saved to My Bookings and redirected to WhatsApp.',
-    );
+      setConfirmedState({ booking: bookingWithLocation, whatsappUrl });
+      onShowToast(
+        'Saved to My Bookings',
+        'Your table reservation was saved to Supabase and redirected to WhatsApp.',
+      );
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Unable to save your reservation right now. Please try again.';
+      setFormErrors({ submit: message });
+      onShowToast('Reservation Failed', message);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
@@ -264,9 +275,9 @@ export function ContactSection({
                 <p className="mt-2 text-sm leading-relaxed text-[#94A3B8]">
                   Reference{' '}
                   <span className="font-semibold text-[#F59E0B] tabular-nums">
-                    {confirmedState.booking.id}
+                    #{confirmedState.booking.id}
                   </span>{' '}
-                  is saved on your device under{' '}
+                  is saved under{' '}
                   <span className="text-[#F8FAFC]">My Bookings</span> with status{' '}
                   <span className="text-[#F8FAFC]">{confirmedState.booking.status}</span>.
                 </p>
@@ -559,9 +570,28 @@ export function ContactSection({
                   </p>
                 </div>
 
-                <MagneticButton type="submit" variant="primary" className="w-full">
-                  <MessageCircle className="h-4 w-4" aria-hidden="true" />
-                  <span>Confirm &amp; Send to WhatsApp</span>
+                {formErrors.submit && (
+                  <p role="alert" className="text-xs font-medium text-[#DC2626]">
+                    {formErrors.submit}
+                  </p>
+                )}
+
+                <MagneticButton
+                  type="submit"
+                  variant="primary"
+                  disabled={isSubmitting}
+                  className="w-full"
+                >
+                  {isSubmitting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  ) : (
+                    <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                  )}
+                  <span>
+                    {isSubmitting
+                      ? 'Saving Reservation...'
+                      : 'Confirm & Send to WhatsApp'}
+                  </span>
                 </MagneticButton>
               </div>
             </form>

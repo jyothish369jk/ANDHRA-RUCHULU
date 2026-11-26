@@ -27,6 +27,7 @@ type DateRangeFilter = '7D' | '30D' | 'Month' | 'All';
 
 interface AggregatorAnalyticsTabProps {
   sessionToken: string;
+  refreshKey?: number;
   onUnauthorized: () => void;
   onShowToast: (title: string, description: string) => void;
 }
@@ -95,6 +96,7 @@ function computeDeltaPercent(current: number, previous: number): number | null {
 
 export function AggregatorAnalyticsTab({
   sessionToken,
+  refreshKey = 0,
   onUnauthorized,
   onShowToast,
 }: AggregatorAnalyticsTabProps) {
@@ -143,19 +145,20 @@ export function AggregatorAnalyticsTab({
         onUnauthorized();
         return;
       }
-      setLoadError('Could not load Zomato & Swiggy analytics right now.');
-      onShowToast(
-        'Analytics Unavailable',
-        'Could not load Zomato & Swiggy analytics data.',
-      );
+      const message =
+        error instanceof Error
+          ? error.message
+          : 'Could not load Zomato & Swiggy analytics right now.';
+      setLoadError(message);
+      onShowToast('Analytics Unavailable', message);
     } finally {
       setIsLoading(false);
     }
   }, [sessionToken, onUnauthorized, onShowToast]);
 
   useEffect(() => {
-    loadEntries();
-  }, [loadEntries]);
+    void loadEntries();
+  }, [loadEntries, refreshKey]);
 
   useEffect(() => {
     if (!drawerOpen && !csvModalOpen) return;
@@ -1205,7 +1208,7 @@ export function AggregatorAnalyticsTab({
 
             {visibleTableEntries.length === 0 ? (
               <div className="px-6 py-12 text-center text-sm text-slate-500">
-                No entries recorded for this filter. Click{' '}
+                No entries recorded in <span className="font-mono text-xs text-slate-700">delivery_analytics</span> yet. Click{' '}
                 <span className="font-semibold text-slate-800">+ Log Orders</span>{' '}
                 or{' '}
                 <span className="font-semibold text-slate-800">Import CSV</span>{' '}

@@ -1,3 +1,4 @@
+import { requireSupabaseClient } from '../lib/supabase';
 import type {
   AggregatorAnalyticsEntry,
   AggregatorEntryInput,
@@ -10,12 +11,10 @@ import type {
 } from '../types/restaurant';
 
 export const LOCAL_VERCEL_SESSION_TOKEN = 'ar_local_vercel_session';
-export const LOCAL_ORDERS_STORAGE_KEY = 'ar_local_customer_orders';
-const LOCAL_AGGREGATORS_STORAGE_KEY = 'ar_local_aggregator_analytics';
-const LOCAL_AGGREGATORS_SEEDED_KEY = 'ar_local_aggregator_seeded_v1';
 export const ORDERS_UPDATED_EVENT = 'ar-orders-updated';
 
 const VALID_ORDER_STATUSES: OrderStatus[] = [
+  'New',
   'Pending',
   'Preparing',
   'Delivered',
@@ -25,40 +24,58 @@ const VALID_ORDER_STATUSES: OrderStatus[] = [
 export function sanitizeCustomerOrder(raw: unknown): CustomerOrder | null {
   if (!raw || typeof raw !== 'object') return null;
   const obj = raw as Record<string, unknown>;
-  const id = typeof obj.id === 'string' ? obj.id.trim() : '';
+  const rawId = obj.id;
+  const id = rawId !== undefined && rawId !== null ? String(rawId).trim() : '';
   if (!id) return null;
 
+  const rawName = obj.customer_name ?? obj.customerName;
   const customerName =
-    typeof obj.customerName === 'string' && obj.customerName.trim()
-      ? obj.customerName.trim()
-      : 'Guest';
-  const customerPhone =
-    typeof obj.customerPhone === 'string' ? obj.customerPhone.trim() : '';
-  const fulfillmentType: OrderFulfillmentType =
-    obj.fulfillmentType === 'Pickup' ? 'Pickup' : 'Delivery';
-  const deliveryAddress =
-    typeof obj.deliveryAddress === 'string' && obj.deliveryAddress.trim()
-      ? obj.deliveryAddress.trim()
-      : fulfillmentType === 'Pickup'
-        ? 'Madhuravada Flagship Pickup / Dine-in'
-        : 'Address not provided';
+    typeof rawName === 'string' && rawName.trim() ? rawName.trim() : 'Guest';
 
-  const rawItems = Array.isArray(obj.items) ? obj.items : [];
-  const items: OrderLineItem[] = rawItems
-    .filter((entry): entry is Record<string, unknown> => Boolean(entry && typeof entry === 'object'))
+  const rawPhone = obj.phone_number ?? obj.customerPhone;
+  const customerPhone =
+    typeof rawPhone === 'string' ? rawPhone.trim() : String(rawPhone ?? '').trim();
+
+  let parsedRawItems: unknown[] = [];
+  if (Array.isArray(obj.items)) {
+    parsedRawItems = obj.items;
+  } else if (typeof obj.items === 'string') {
+    try {
+      const maybeArr = JSON.parse(obj.items);
+      if (Array.isArray(maybeArr)) parsedRawItems = maybeArr;
+    } catch {
+      parsedRawItems = [];
+    }
+  }
+
+  const items: OrderLineItem[] = parsedRawItems
+    .filter((entry): entry is Record<string, unknown> =>
+      Boolean(entry && typeof entry === 'object'),
+    )
     .map((entry, idx) => {
-      const quantity = Number.isFinite(Number(entry.quantity)) && Number(entry.quantity) > 0
-        ? Math.round(Number(entry.quantity))
-        : 1;
-      const unitPriceInr = Number.isFinite(Number(entry.unitPriceInr)) && Number(entry.unitPriceInr) >= 0
-        ? Math.round(Number(entry.unitPriceInr))
-        : 0;
-      const lineTotalInr = Number.isFinite(Number(entry.lineTotalInr)) && Number(entry.lineTotalInr) >= 0
-        ? Math.round(Number(entry.lineTotalInr))
-        : unitPriceInr * quantity;
+      const quantity =
+        Number.isFinite(Number(entry.quantity)) && Number(entry.quantity) > 0
+          ? Math.round(Number(entry.quantity))
+          : 1;
+      const unitPriceInr =
+        Number.isFinite(Number(entry.unitPriceInr)) &&
+        Number(entry.unitPriceInr) >= 0
+          ? Math.round(Number(entry.unitPriceInr))
+          : 0;
+      const lineTotalInr =
+        Number.isFinite(Number(entry.lineTotalInr)) &&
+        Number(entry.lineTotalInr) >= 0
+          ? Math.round(Number(entry.lineTotalInr))
+          : unitPriceInr * quantity;
       return {
-        itemId: typeof entry.itemId === 'string' && entry.itemId ? entry.itemId : `item-${idx}`,
-        name: typeof entry.name === 'string' && entry.name.trim() ? entry.name.trim() : 'Menu Item',
+        itemId:
+          typeof entry.itemId === 'string' && entry.itemId
+            ? entry.itemId
+            : `item-${idx}`,
+        name:
+          typeof entry.name === 'string' && entry.name.trim()
+            ? entry.name.trim()
+            : 'Menu Item',
         quantity,
         spicePreference:
           entry.spicePreference === 'Mild Temper' ||
@@ -72,9 +89,37 @@ export function sanitizeCustomerOrder(raw: unknown): CustomerOrder | null {
             : 'Signature Plate',
         unitPriceInr,
         lineTotalInr,
-        notes: typeof entry.notes === 'string' && entry.notes.trim() ? entry.notes.trim() : undefined,
+        notes:
+          typeof entry.notes === 'string' && entry.notes.trim()
+            ? entry.notes.trim()
+            : undefined,
+        fulfillmentType:
+          entry.fulfillmentType === 'Pickup' || entry.fulfillmentType === 'Delivery'
+            ? entry.fulfillmentType
+            : undefined,
+        deliveryAddress:
+          typeof entry.deliveryAddress === 'string' &&
+          entry.deliveryAddress.trim()
+            ? entry.deliveryAddress.trim()
+            : undefined,
       };
     });
+
+  const itemFulfillment = items.find((i) => i.fulfillmentType)?.fulfillmentType;
+  const itemAddress = items.find((i) => i.deliveryAddress)?.deliveryAddress;
+
+  const fulfillmentType: OrderFulfillmentType =
+    obj.fulfillmentType === 'Pickup' || itemFulfillment === 'Pickup'
+      ? 'Pickup'
+      : 'Delivery';
+
+  const rawAddress = obj.deliveryAddress ?? itemAddress;
+  const deliveryAddress =
+    typeof rawAddress === 'string' && rawAddress.trim()
+      ? rawAddress.trim()
+      : fulfillmentType === 'Pickup'
+        ? 'Madhuravada Flagship Pickup / Dine-in'
+        : 'Address not provided';
 
   const computedSubtotal = items.reduce((sum, l) => sum + l.lineTotalInr, 0);
   const subtotalInr = Number.isFinite(Number(obj.subtotalInr))
@@ -83,13 +128,20 @@ export function sanitizeCustomerOrder(raw: unknown): CustomerOrder | null {
   const taxesInr = Number.isFinite(Number(obj.taxesInr))
     ? Math.max(0, Math.round(Number(obj.taxesInr)))
     : Math.round(subtotalInr * 0.05);
-  const totalAmountInr = Number.isFinite(Number(obj.totalAmountInr))
-    ? Math.max(0, Math.round(Number(obj.totalAmountInr)))
+
+  const rawTotal = obj.total_amount ?? obj.totalAmountInr;
+  const totalAmountInr = Number.isFinite(Number(rawTotal))
+    ? Math.max(0, Math.round(Number(rawTotal)))
     : subtotalInr + taxesInr;
-  const status: OrderStatus = VALID_ORDER_STATUSES.includes(obj.status as OrderStatus)
+
+  const status: OrderStatus = VALID_ORDER_STATUSES.includes(
+    obj.status as OrderStatus,
+  )
     ? (obj.status as OrderStatus)
-    : 'Pending';
+    : 'New';
   const nowIso = new Date().toISOString();
+  const rawCreated = obj.created_at ?? obj.createdAt;
+  const rawUpdated = obj.updated_at ?? obj.updatedAt ?? rawCreated;
 
   return {
     id,
@@ -102,48 +154,79 @@ export function sanitizeCustomerOrder(raw: unknown): CustomerOrder | null {
     taxesInr,
     totalAmountInr,
     status,
-    createdAt: typeof obj.createdAt === 'string' && obj.createdAt ? obj.createdAt : nowIso,
-    updatedAt: typeof obj.updatedAt === 'string' && obj.updatedAt ? obj.updatedAt : nowIso,
+    createdAt:
+      typeof rawCreated === 'string' && rawCreated ? rawCreated : nowIso,
+    updatedAt:
+      typeof rawUpdated === 'string' && rawUpdated ? rawUpdated : nowIso,
   };
 }
 
-export function sanitizeAggregatorEntry(raw: unknown): AggregatorAnalyticsEntry | null {
+export function sanitizeAggregatorEntry(
+  raw: unknown,
+): AggregatorAnalyticsEntry | null {
   if (!raw || typeof raw !== 'object') return null;
   const obj = raw as Record<string, unknown>;
-  const id = typeof obj.id === 'string' ? obj.id.trim() : '';
-  const platform: AggregatorPlatform | null =
-    obj.platform === 'Zomato' || obj.platform === 'Swiggy' ? obj.platform : null;
-  const date = typeof obj.date === 'string' ? obj.date.trim() : '';
-  if (!id || !platform || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const rawId = obj.id;
+  const id = rawId !== undefined && rawId !== null ? String(rawId).trim() : '';
 
-  const orders = Number.isFinite(Number(obj.orders)) ? Math.max(0, Math.round(Number(obj.orders))) : 0;
-  const grossSalesInr = Number.isFinite(Number(obj.grossSalesInr))
-    ? Math.max(0, Math.round(Number(obj.grossSalesInr)))
+  const rawPlatform = String(obj.platform ?? '')
+    .trim()
+    .toLowerCase();
+  const platform: AggregatorPlatform | null =
+    rawPlatform === 'zomato'
+      ? 'Zomato'
+      : rawPlatform === 'swiggy'
+        ? 'Swiggy'
+        : null;
+
+  const rawDate = typeof obj.date === 'string' ? obj.date.trim().slice(0, 10) : '';
+  if (!id || !platform || !/^\d{4}-\d{2}-\d{2}$/.test(rawDate)) return null;
+
+  const rawOrders = obj.orders_count ?? obj.orders;
+  const orders = Number.isFinite(Number(rawOrders))
+    ? Math.max(0, Math.round(Number(rawOrders)))
     : 0;
-  const deductionsInr = Number.isFinite(Number(obj.deductionsInr))
-    ? Math.max(0, Math.round(Number(obj.deductionsInr)))
+
+  const rawGross = obj.gross_sales ?? obj.grossSalesInr;
+  const grossSalesInr = Number.isFinite(Number(rawGross))
+    ? Math.max(0, Math.round(Number(rawGross)))
     : 0;
-  const netPayoutInr = Number.isFinite(Number(obj.netPayoutInr))
-    ? Math.round(Number(obj.netPayoutInr))
+
+  const rawDeductions = obj.deductions ?? obj.deductionsInr;
+  const deductionsInr = Number.isFinite(Number(rawDeductions))
+    ? Math.max(0, Math.round(Number(rawDeductions)))
+    : 0;
+
+  const rawNet = obj.net_payout ?? obj.netPayoutInr;
+  const netPayoutInr = Number.isFinite(Number(rawNet))
+    ? Math.round(Number(rawNet))
     : grossSalesInr - deductionsInr;
+
   const source =
     obj.source === 'CSV' || obj.source === 'Seeded' || obj.source === 'Manual'
       ? obj.source
       : 'Manual';
   const nowIso = new Date().toISOString();
+  const rawCreated = obj.created_at ?? obj.createdAt;
+  const rawUpdated = obj.updated_at ?? obj.updatedAt ?? rawCreated;
 
   return {
     id,
     platform,
-    date,
+    date: rawDate,
     orders,
     grossSalesInr,
     deductionsInr,
     netPayoutInr,
     source,
-    notes: typeof obj.notes === 'string' && obj.notes.trim() ? obj.notes.trim() : undefined,
-    createdAt: typeof obj.createdAt === 'string' && obj.createdAt ? obj.createdAt : nowIso,
-    updatedAt: typeof obj.updatedAt === 'string' && obj.updatedAt ? obj.updatedAt : nowIso,
+    notes:
+      typeof obj.notes === 'string' && obj.notes.trim()
+        ? obj.notes.trim()
+        : undefined,
+    createdAt:
+      typeof rawCreated === 'string' && rawCreated ? rawCreated : nowIso,
+    updatedAt:
+      typeof rawUpdated === 'string' && rawUpdated ? rawUpdated : nowIso,
   };
 }
 
@@ -195,13 +278,6 @@ export function buildSeededAggregatorEntries(
     { zomatoOrders: 42, zomatoGross: 33680, zomatoDedPct: 0.23, swiggyOrders: 37, swiggyGross: 29450, swiggyDedPct: 0.23 },
     { zomatoOrders: 48, zomatoGross: 38920, zomatoDedPct: 0.23, swiggyOrders: 44, swiggyGross: 35600, swiggyDedPct: 0.24 },
     { zomatoOrders: 39, zomatoGross: 31150, zomatoDedPct: 0.22, swiggyOrders: 35, swiggyGross: 27840, swiggyDedPct: 0.23 },
-    { zomatoOrders: 30, zomatoGross: 22960, zomatoDedPct: 0.21, swiggyOrders: 27, swiggyGross: 20790, swiggyDedPct: 0.22 },
-    { zomatoOrders: 35, zomatoGross: 27140, zomatoDedPct: 0.22, swiggyOrders: 31, swiggyGross: 24210, swiggyDedPct: 0.22 },
-    { zomatoOrders: 38, zomatoGross: 29870, zomatoDedPct: 0.22, swiggyOrders: 33, swiggyGross: 25940, swiggyDedPct: 0.23 },
-    { zomatoOrders: 41, zomatoGross: 32540, zomatoDedPct: 0.22, swiggyOrders: 38, swiggyGross: 30120, swiggyDedPct: 0.23 },
-    { zomatoOrders: 51, zomatoGross: 41860, zomatoDedPct: 0.23, swiggyOrders: 46, swiggyGross: 37490, swiggyDedPct: 0.24 },
-    { zomatoOrders: 54, zomatoGross: 44720, zomatoDedPct: 0.23, swiggyOrders: 49, swiggyGross: 40350, swiggyDedPct: 0.24 },
-    { zomatoOrders: 45, zomatoGross: 36480, zomatoDedPct: 0.22, swiggyOrders: 40, swiggyGross: 32260, swiggyDedPct: 0.23 },
   ];
 
   const entries: AggregatorAnalyticsEntry[] = [];
@@ -286,7 +362,11 @@ function parseNumericCurrency(raw: string | undefined): number {
   return Number.isFinite(num) ? Math.round(num) : NaN;
 }
 
-function isValidCalendarDate(year: number, month: number, day: number): boolean {
+function isValidCalendarDate(
+  year: number,
+  month: number,
+  day: number,
+): boolean {
   if (
     !Number.isInteger(year) ||
     !Number.isInteger(month) ||
@@ -323,7 +403,6 @@ function normalizeDateString(raw: string | undefined): string | null {
     const first = Number(dmyMatch[1]);
     const second = Number(dmyMatch[2]);
     const year = Number(dmyMatch[3]);
-    // Support DD/MM/YYYY by default, and auto-detect MM/DD/YYYY when second part > 12
     const day = second > 12 && first <= 12 ? second : first;
     const month = second > 12 && first <= 12 ? first : second;
     if (!isValidCalendarDate(year, month, day)) {
@@ -338,7 +417,9 @@ function normalizeDateString(raw: string | undefined): string | null {
   return null;
 }
 
-function normalizePlatformName(raw: string | undefined): AggregatorPlatform | null {
+function normalizePlatformName(
+  raw: string | undefined,
+): AggregatorPlatform | null {
   if (!raw) return null;
   const lower = raw.trim().toLowerCase();
   if (lower.includes('zomato')) return 'Zomato';
@@ -347,9 +428,9 @@ function normalizePlatformName(raw: string | undefined): AggregatorPlatform | nu
 }
 
 export const SAMPLE_AGGREGATOR_CSV = [
-  'Platform,Date,Orders,Gross Sales,Deductions,Notes',
-  `Zomato,${formatIsoDate(new Date())},49,39400,8668,Weekend dinner surge`,
-  `Swiggy,${formatIsoDate(new Date())},43,34150,7854,Weekend dinner surge`,
+  'Platform,Date,Orders,Gross Sales,Deductions',
+  `Zomato,${formatIsoDate(new Date())},49,39400,8668`,
+  `Swiggy,${formatIsoDate(new Date())},43,34150,7854`,
 ].join('\n');
 
 export function parseSampleFriendlyCsv(csvText: string): ParsedCsvResult {
@@ -433,7 +514,9 @@ export function parseSampleFriendlyCsv(csvText: string): ParsedCsvResult {
     ) {
       skippedRows += 1;
       if (errors.length < 4) {
-        errors.push(`Row ${rowIdx + 1}: Invalid platform, date, orders, or gross sales.`);
+        errors.push(
+          `Row ${rowIdx + 1}: Invalid platform, date, orders, or gross sales.`,
+        );
       }
       continue;
     }
@@ -459,76 +542,40 @@ export class UnauthorizedAggregatorError extends Error {
   }
 }
 
-class StaticHostFallbackSignal extends Error {
-  constructor() {
-    super('Static host mode');
-    this.name = 'StaticHostFallbackSignal';
-  }
-}
+export const ordersService = {
+  async listOrders(): Promise<CustomerOrder[]> {
+    const supabase = requireSupabaseClient();
+    const { data, error } = await supabase.from('customer_orders').select('*');
 
-function readLocalAggregators(): AggregatorAnalyticsEntry[] {
-  try {
-    const raw = window.localStorage.getItem(LOCAL_AGGREGATORS_STORAGE_KEY);
-    if (raw !== null) {
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        const sanitized = parsed
-          .map(sanitizeAggregatorEntry)
-          .filter((item): item is AggregatorAnalyticsEntry => item !== null)
-          .sort((a, b) => b.date.localeCompare(a.date));
-        if (sanitized.length > 0 || window.localStorage.getItem(LOCAL_AGGREGATORS_SEEDED_KEY) === 'true') {
-          return sanitized;
-        }
-      }
+    if (error) {
+      throw new Error(error.message || 'Failed to load customer orders.');
     }
-  } catch {
-    // Ignore storage errors
-  }
-  const seeded = buildSeededAggregatorEntries();
-  writeLocalAggregators(seeded);
-  return seeded;
-}
 
-function writeLocalAggregators(entries: AggregatorAnalyticsEntry[]): void {
-  try {
-    window.localStorage.setItem(LOCAL_AGGREGATORS_SEEDED_KEY, 'true');
-    window.localStorage.setItem(
-      LOCAL_AGGREGATORS_STORAGE_KEY,
-      JSON.stringify(entries),
-    );
-  } catch {
-    // Ignore storage quota/private-mode errors
-  }
-}
-
-export const localOrdersService = {
-  listOrders(): CustomerOrder[] {
-    try {
-      const raw = window.localStorage.getItem(LOCAL_ORDERS_STORAGE_KEY);
-      if (!raw) return [];
-      const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      return parsed
-        .map(sanitizeCustomerOrder)
-        .filter((ord): ord is CustomerOrder => ord !== null)
-        .sort(
-          (a, b) =>
-            (new Date(b.createdAt).getTime() || 0) -
-            (new Date(a.createdAt).getTime() || 0),
-        );
-    } catch {
-      return [];
-    }
+    const rows = Array.isArray(data) ? data : [];
+    return rows
+      .map(sanitizeCustomerOrder)
+      .filter((ord): ord is CustomerOrder => ord !== null)
+      .sort(
+        (a, b) =>
+          (new Date(b.createdAt).getTime() || 0) -
+          (new Date(a.createdAt).getTime() || 0),
+      );
   },
 
-  createOrder(params: {
+  async createOrder(params: {
     customerName: string;
     customerPhone: string;
     fulfillmentType: OrderFulfillmentType;
     deliveryAddress: string;
     cartItems: CartItem[];
-  }): CustomerOrder {
-    const lineItems: OrderLineItem[] = params.cartItems.map((entry) => ({
+  }): Promise<CustomerOrder> {
+    const supabase = requireSupabaseClient();
+    const resolvedAddress =
+      params.fulfillmentType === 'Delivery'
+        ? params.deliveryAddress.trim()
+        : params.deliveryAddress.trim() || 'Madhuravada Flagship Pickup / Dine-in';
+
+    const lineItems: OrderLineItem[] = params.cartItems.map((entry, idx) => ({
       itemId: entry.item.id,
       name: entry.item.name,
       quantity: entry.quantity,
@@ -537,6 +584,12 @@ export const localOrdersService = {
       unitPriceInr: entry.unitPriceInr,
       lineTotalInr: entry.unitPriceInr * entry.quantity,
       notes: entry.notes,
+      ...(idx === 0
+        ? {
+            fulfillmentType: params.fulfillmentType,
+            deliveryAddress: resolvedAddress,
+          }
+        : {}),
     }));
 
     const subtotalInr = lineItems.reduce(
@@ -545,316 +598,208 @@ export const localOrdersService = {
     );
     const taxesInr = Math.round(subtotalInr * 0.05);
     const totalAmountInr = subtotalInr + taxesInr;
-    const nowIso = new Date().toISOString();
 
-    const newOrder: CustomerOrder = {
-      id: `AR-${Date.now().toString().slice(-4)}${Math.floor(10 + Math.random() * 89)}`,
-      customerName: params.customerName.trim(),
-      customerPhone: params.customerPhone.replace(/\D/g, '').slice(-10),
-      fulfillmentType: params.fulfillmentType,
-      deliveryAddress:
-        params.fulfillmentType === 'Delivery'
-          ? params.deliveryAddress.trim()
-          : params.deliveryAddress.trim() || 'Madhuravada Flagship Pickup / Dine-in',
-      items: lineItems,
-      subtotalInr,
-      taxesInr,
-      totalAmountInr,
-      status: 'Pending',
-      createdAt: nowIso,
-      updatedAt: nowIso,
-    };
+    const { data, error } = await supabase
+      .from('customer_orders')
+      .insert({
+        customer_name: params.customerName.trim(),
+        phone_number: params.customerPhone.replace(/\D/g, '').slice(-10),
+        items: lineItems,
+        total_amount: totalAmountInr,
+        status: 'New',
+      })
+      .select('*')
+      .single();
 
-    const existing = this.listOrders();
-    const updated = [newOrder, ...existing];
-    try {
-      window.localStorage.setItem(
-        LOCAL_ORDERS_STORAGE_KEY,
-        JSON.stringify(updated),
-      );
-      notifyOrdersUpdated();
-    } catch {
-      // Ignore storage errors
+    if (error) {
+      throw new Error(error.message || 'Failed to submit customer order.');
     }
-    return newOrder;
+
+    const sanitized = sanitizeCustomerOrder(data);
+    if (!sanitized) {
+      throw new Error('Unexpected order response from database.');
+    }
+
+    notifyOrdersUpdated();
+    return sanitized;
   },
 
-  updateOrderStatus(orderId: string, nextStatus: OrderStatus): CustomerOrder | null {
-    const existing = this.listOrders();
-    let updatedOrder: CustomerOrder | null = null;
-    const nextList = existing.map((ord) => {
-      if (ord.id !== orderId) return ord;
-      updatedOrder = {
-        ...ord,
-        status: nextStatus,
-        updatedAt: new Date().toISOString(),
-      };
-      return updatedOrder;
-    });
-    if (updatedOrder) {
-      try {
-        window.localStorage.setItem(
-          LOCAL_ORDERS_STORAGE_KEY,
-          JSON.stringify(nextList),
-        );
-        notifyOrdersUpdated();
-      } catch {
-        // Ignore storage errors
-      }
+  async updateOrderStatus(
+    orderId: string,
+    nextStatus: OrderStatus,
+  ): Promise<CustomerOrder> {
+    const supabase = requireSupabaseClient();
+    const { data, error } = await supabase
+      .from('customer_orders')
+      .update({ status: nextStatus })
+      .eq('id', orderId)
+      .select('*')
+      .single();
+
+    if (error) {
+      throw new Error(error.message || 'Failed to update order status.');
     }
-    return updatedOrder;
+
+    const sanitized = sanitizeCustomerOrder(data);
+    if (!sanitized) {
+      throw new Error(`Order #${orderId} could not be found.`);
+    }
+
+    notifyOrdersUpdated();
+    return sanitized;
   },
 
-  deleteOrder(orderId: string): boolean {
-    const existing = this.listOrders();
-    const filtered = existing.filter((ord) => ord.id !== orderId);
-    if (filtered.length === existing.length) return false;
-    try {
-      window.localStorage.setItem(
-        LOCAL_ORDERS_STORAGE_KEY,
-        JSON.stringify(filtered),
-      );
-      notifyOrdersUpdated();
-    } catch {
-      // Ignore storage errors
+  async deleteOrder(orderId: string): Promise<void> {
+    const supabase = requireSupabaseClient();
+    const { error } = await supabase
+      .from('customer_orders')
+      .delete()
+      .eq('id', orderId);
+
+    if (error) {
+      throw new Error(error.message || 'Failed to delete customer order.');
     }
-    return true;
+
+    notifyOrdersUpdated();
   },
 };
 
-async function parseJsonOrFallback<T>(res: Response): Promise<T> {
-  if (res.status === 401) {
-    throw new UnauthorizedAggregatorError();
-  }
-  const contentType = res.headers.get('content-type') || '';
-  if (res.status === 404 || !contentType.includes('application/json')) {
-    throw new StaticHostFallbackSignal();
-  }
-  const data = (await res.json()) as T & { error?: string };
-  if (!res.ok) {
-    throw new Error(data.error || 'Analytics request failed.');
-  }
-  return data;
-}
-
 export const dataService = {
   async listAggregatorEntries(
-    token: string,
+    _token?: string,
   ): Promise<AggregatorAnalyticsEntry[]> {
-    if (token === LOCAL_VERCEL_SESSION_TOKEN) {
-      return readLocalAggregators();
+    const supabase = requireSupabaseClient();
+    const { data, error } = await supabase
+      .from('delivery_analytics')
+      .select('*')
+      .order('date', { ascending: false });
+
+    if (error) {
+      throw new Error(
+        error.message || 'Failed to load Zomato & Swiggy analytics.',
+      );
     }
-    try {
-      const res = await fetch('/api/admin/aggregators', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      const data = await parseJsonOrFallback<{
-        entries: AggregatorAnalyticsEntry[];
-      }>(res);
-      return Array.isArray(data.entries)
-        ? data.entries
-            .map(sanitizeAggregatorEntry)
-            .filter((item): item is AggregatorAnalyticsEntry => item !== null)
-        : [];
-    } catch (error) {
-      if (error instanceof StaticHostFallbackSignal) {
-        return readLocalAggregators();
-      }
-      throw error;
-    }
+
+    const rows = Array.isArray(data) ? data : [];
+    return rows
+      .map(sanitizeAggregatorEntry)
+      .filter((item): item is AggregatorAnalyticsEntry => item !== null)
+      .sort((a, b) => b.date.localeCompare(a.date));
   },
 
   async createAggregatorEntry(
-    token: string,
+    _token: string,
     payload: AggregatorEntryInput,
   ): Promise<AggregatorAnalyticsEntry> {
-    const buildLocalEntry = (): AggregatorAnalyticsEntry => {
-      const nowIso = new Date().toISOString();
-      const gross = Math.round(payload.grossSalesInr);
-      const ded = Math.round(payload.deductionsInr);
-      const created: AggregatorAnalyticsEntry = {
-        id: `agg-${Date.now().toString(36)}-${Math.floor(100 + Math.random() * 899)}`,
+    const supabase = requireSupabaseClient();
+    const gross = Math.max(0, Math.round(payload.grossSalesInr));
+    const ded = Math.max(0, Math.round(payload.deductionsInr));
+    const net = gross - ded;
+
+    const { data, error } = await supabase
+      .from('delivery_analytics')
+      .insert({
         platform: payload.platform,
         date: payload.date,
-        orders: Math.round(payload.orders),
-        grossSalesInr: gross,
-        deductionsInr: ded,
-        netPayoutInr: gross - ded,
-        source: payload.source || 'Manual',
-        notes: payload.notes,
-        createdAt: nowIso,
-        updatedAt: nowIso,
-      };
-      const existing = readLocalAggregators();
-      writeLocalAggregators([created, ...existing]);
-      return created;
-    };
+        orders_count: Math.max(0, Math.round(payload.orders)),
+        gross_sales: gross,
+        deductions: ded,
+        net_payout: net,
+      })
+      .select('*')
+      .single();
 
-    if (token === LOCAL_VERCEL_SESSION_TOKEN) {
-      return buildLocalEntry();
+    if (error) {
+      throw new Error(error.message || 'Failed to log aggregator orders.');
     }
 
-    try {
-      const res = await fetch('/api/admin/aggregators', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      });
-      const data = await parseJsonOrFallback<{
-        entry: AggregatorAnalyticsEntry;
-      }>(res);
-      return data.entry;
-    } catch (error) {
-      if (error instanceof StaticHostFallbackSignal) {
-        return buildLocalEntry();
-      }
-      throw error;
+    const sanitized = sanitizeAggregatorEntry(data);
+    if (!sanitized) {
+      throw new Error('Unexpected analytics response from database.');
     }
+    return sanitized;
   },
 
   async importAggregatorEntries(
-    token: string,
+    _token: string,
     rows: AggregatorEntryInput[],
   ): Promise<AggregatorAnalyticsEntry[]> {
-    const buildLocalImport = (): AggregatorAnalyticsEntry[] => {
-      const nowIso = new Date().toISOString();
-      const created: AggregatorAnalyticsEntry[] = rows.map((row, idx) => {
-        const gross = Math.round(row.grossSalesInr);
-        const ded = Math.round(row.deductionsInr);
-        return {
-          id: `csv-${Date.now().toString(36)}-${idx}-${Math.random().toString(36).slice(2, 6)}`,
-          platform: row.platform,
-          date: row.date,
-          orders: Math.round(row.orders),
-          grossSalesInr: gross,
-          deductionsInr: ded,
-          netPayoutInr: gross - ded,
-          source: 'CSV',
-          notes: row.notes,
-          createdAt: nowIso,
-          updatedAt: nowIso,
-        };
-      });
-      const existing = readLocalAggregators();
-      writeLocalAggregators([...created, ...existing]);
-      return created;
-    };
+    const supabase = requireSupabaseClient();
+    const insertRows = rows.map((row) => {
+      const gross = Math.max(0, Math.round(row.grossSalesInr));
+      const ded = Math.max(0, Math.round(row.deductionsInr));
+      return {
+        platform: row.platform,
+        date: row.date,
+        orders_count: Math.max(0, Math.round(row.orders)),
+        gross_sales: gross,
+        deductions: ded,
+        net_payout: gross - ded,
+      };
+    });
 
-    if (token === LOCAL_VERCEL_SESSION_TOKEN) {
-      return buildLocalImport();
+    const { data, error } = await supabase
+      .from('delivery_analytics')
+      .insert(insertRows)
+      .select('*');
+
+    if (error) {
+      throw new Error(error.message || 'Failed to import CSV rows.');
     }
 
-    try {
-      const res = await fetch('/api/admin/aggregators/import', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({ entries: rows }),
-      });
-      const data = await parseJsonOrFallback<{
-        entries: AggregatorAnalyticsEntry[];
-      }>(res);
-      return Array.isArray(data.entries) ? data.entries : [];
-    } catch (error) {
-      if (error instanceof StaticHostFallbackSignal) {
-        return buildLocalImport();
-      }
-      throw error;
-    }
+    const inserted = Array.isArray(data) ? data : [];
+    return inserted
+      .map((item): AggregatorAnalyticsEntry | null => {
+        const sanitized = sanitizeAggregatorEntry(item);
+        return sanitized ? { ...sanitized, source: 'CSV' } : null;
+      })
+      .filter((item): item is AggregatorAnalyticsEntry => item !== null);
   },
 
   async updateAggregatorEntry(
-    token: string,
+    _token: string,
     id: string,
     payload: AggregatorEntryInput,
   ): Promise<AggregatorAnalyticsEntry> {
-    const updateLocal = (): AggregatorAnalyticsEntry => {
-      const existing = readLocalAggregators();
-      const gross = Math.round(payload.grossSalesInr);
-      const ded = Math.round(payload.deductionsInr);
-      let updatedItem: AggregatorAnalyticsEntry | null = null;
-      const next = existing.map((item) => {
-        if (item.id !== id) return item;
-        updatedItem = {
-          ...item,
-          platform: payload.platform,
-          date: payload.date,
-          orders: Math.round(payload.orders),
-          grossSalesInr: gross,
-          deductionsInr: ded,
-          netPayoutInr: gross - ded,
-          source: payload.source || item.source,
-          notes: payload.notes,
-          updatedAt: new Date().toISOString(),
-        };
-        return updatedItem;
-      });
-      if (!updatedItem) {
-        throw new Error('Entry not found.');
-      }
-      writeLocalAggregators(next);
-      return updatedItem;
-    };
+    const supabase = requireSupabaseClient();
+    const gross = Math.max(0, Math.round(payload.grossSalesInr));
+    const ded = Math.max(0, Math.round(payload.deductionsInr));
+    const net = gross - ded;
 
-    if (token === LOCAL_VERCEL_SESSION_TOKEN) {
-      return updateLocal();
+    const { data, error } = await supabase
+      .from('delivery_analytics')
+      .update({
+        platform: payload.platform,
+        date: payload.date,
+        orders_count: Math.max(0, Math.round(payload.orders)),
+        gross_sales: gross,
+        deductions: ded,
+        net_payout: net,
+      })
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (error) {
+      throw new Error(error.message || 'Failed to update analytics entry.');
     }
 
-    try {
-      const res = await fetch(
-        `/api/admin/aggregators/${encodeURIComponent(id)}`,
-        {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify(payload),
-        },
-      );
-      const data = await parseJsonOrFallback<{
-        entry: AggregatorAnalyticsEntry;
-      }>(res);
-      return data.entry;
-    } catch (error) {
-      if (error instanceof StaticHostFallbackSignal) {
-        return updateLocal();
-      }
-      throw error;
+    const sanitized = sanitizeAggregatorEntry(data);
+    if (!sanitized) {
+      throw new Error('Analytics entry not found.');
     }
+    return sanitized;
   },
 
-  async deleteAggregatorEntry(token: string, id: string): Promise<void> {
-    const deleteLocal = () => {
-      const existing = readLocalAggregators();
-      writeLocalAggregators(existing.filter((item) => item.id !== id));
-    };
+  async deleteAggregatorEntry(_token: string, id: string): Promise<void> {
+    const supabase = requireSupabaseClient();
+    const { error } = await supabase
+      .from('delivery_analytics')
+      .delete()
+      .eq('id', id);
 
-    if (token === LOCAL_VERCEL_SESSION_TOKEN) {
-      deleteLocal();
-      return;
-    }
-
-    try {
-      const res = await fetch(
-        `/api/admin/aggregators/${encodeURIComponent(id)}`,
-        {
-          method: 'DELETE',
-          headers: { Authorization: `Bearer ${token}` },
-        },
-      );
-      await parseJsonOrFallback<{ ok: boolean }>(res);
-    } catch (error) {
-      if (error instanceof StaticHostFallbackSignal) {
-        deleteLocal();
-        return;
-      }
-      throw error;
+    if (error) {
+      throw new Error(error.message || 'Failed to delete analytics entry.');
     }
   },
 

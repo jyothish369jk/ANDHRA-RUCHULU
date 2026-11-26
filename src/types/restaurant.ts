@@ -84,7 +84,7 @@ export interface TableBooking {
   updatedAt?: string;
 }
 
-export type OrderStatus = 'Pending' | 'Preparing' | 'Delivered' | 'Cancelled';
+export type OrderStatus = 'New' | 'Pending' | 'Preparing' | 'Delivered' | 'Cancelled';
 
 export type OrderFulfillmentType = 'Delivery' | 'Pickup';
 
@@ -97,6 +97,8 @@ export interface OrderLineItem {
   unitPriceInr: number;
   lineTotalInr: number;
   notes?: string;
+  fulfillmentType?: OrderFulfillmentType;
+  deliveryAddress?: string;
 }
 
 export interface CustomerOrder {

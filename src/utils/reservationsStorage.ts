@@ -1,10 +1,10 @@
+import { requireSupabaseClient } from '../lib/supabase';
 import type {
   BookingStatus,
   ReservationOccasion,
   TableBooking,
 } from '../types/restaurant';
 
-export const BOOKINGS_STORAGE_KEY = 'my_restaurant_bookings';
 export const OWNER_WHATSAPP_NUMBER = '919381228257';
 export const BOOKINGS_UPDATED_EVENT = 'ar-bookings-updated';
 
@@ -29,11 +29,13 @@ const VALID_BOOKING_STATUSES: BookingStatus[] = [
 export function sanitizeTableBooking(raw: unknown): TableBooking | null {
   if (!raw || typeof raw !== 'object') return null;
   const obj = raw as Record<string, unknown>;
-  const id = typeof obj.id === 'string' ? obj.id.trim() : '';
-  const name = typeof obj.name === 'string' ? obj.name.trim() : '';
+  const rawId = obj.id;
+  const id =
+    rawId !== undefined && rawId !== null ? String(rawId).trim() : '';
+  const name = String(obj.customer_name ?? obj.name ?? '').trim();
   if (!id || !name) return null;
 
-  const phone = typeof obj.phone === 'string' ? obj.phone.trim() : '';
+  const phone = String(obj.phone_number ?? obj.phone ?? '').trim();
   const occasion: ReservationOccasion = VALID_OCCASIONS.includes(
     obj.occasion as ReservationOccasion,
   )
@@ -44,19 +46,24 @@ export function sanitizeTableBooking(raw: unknown): TableBooking | null {
     Number.isFinite(rawGuests) && rawGuests >= 1
       ? Math.min(100, Math.round(rawGuests))
       : 2;
+
+  const rawDateTime = obj.booking_time ?? obj.dateTime;
   const dateTime =
-    typeof obj.dateTime === 'string' && obj.dateTime.trim()
-      ? obj.dateTime.trim()
+    typeof rawDateTime === 'string' && rawDateTime.trim()
+      ? rawDateTime.trim()
       : new Date().toISOString();
+
+  const rawBookedAt = obj.created_at ?? obj.bookedAt ?? rawDateTime;
   const bookedAt =
-    typeof obj.bookedAt === 'string' && obj.bookedAt.trim()
-      ? obj.bookedAt.trim()
+    typeof rawBookedAt === 'string' && rawBookedAt.trim()
+      ? rawBookedAt.trim()
       : new Date().toISOString();
+
   const status: BookingStatus = VALID_BOOKING_STATUSES.includes(
     obj.status as BookingStatus,
   )
     ? (obj.status as BookingStatus)
-    : 'Sent via WhatsApp (Awaiting Reply)';
+    : 'Pending';
 
   return {
     id,
@@ -85,6 +92,108 @@ function notifyBookingsUpdated(): void {
     // Ignore in non-DOM environments
   }
 }
+
+export const bookingsService = {
+  async listBookings(): Promise<TableBooking[]> {
+    const supabase = requireSupabaseClient();
+    const { data, error } = await supabase
+      .from('table_bookings')
+      .select('*')
+      .order('booking_time', { ascending: false });
+
+    if (error) {
+      throw new Error(error.message || 'Failed to load table reservations.');
+    }
+
+    const rows = Array.isArray(data) ? data : [];
+    return rows
+      .map(sanitizeTableBooking)
+      .filter((item): item is TableBooking => item !== null)
+      .sort(
+        (a, b) =>
+          (new Date(b.bookedAt || b.dateTime).getTime() || 0) -
+          (new Date(a.bookedAt || a.dateTime).getTime() || 0),
+      );
+  },
+
+  async createBooking(input: {
+    name: string;
+    phone: string;
+    occasion: ReservationOccasion;
+    guests: number;
+    dateTime: string;
+  }): Promise<TableBooking> {
+    const supabase = requireSupabaseClient();
+    const parsedTime = new Date(input.dateTime);
+    const bookingTimeIso = Number.isNaN(parsedTime.getTime())
+      ? input.dateTime
+      : parsedTime.toISOString();
+
+    const { data, error } = await supabase
+      .from('table_bookings')
+      .insert({
+        customer_name: input.name.trim(),
+        phone_number: input.phone.trim(),
+        occasion: input.occasion,
+        guests: Math.max(1, Math.round(input.guests)),
+        booking_time: bookingTimeIso,
+        status: 'Pending',
+      })
+      .select('*')
+      .single();
+
+    if (error) {
+      throw new Error(error.message || 'Failed to save table reservation.');
+    }
+
+    const sanitized = sanitizeTableBooking(data);
+    if (!sanitized) {
+      throw new Error('Unexpected reservation response from database.');
+    }
+
+    notifyBookingsUpdated();
+    return sanitized;
+  },
+
+  async updateBookingStatus(
+    id: string,
+    status: BookingStatus,
+  ): Promise<TableBooking> {
+    const supabase = requireSupabaseClient();
+    const { data, error } = await supabase
+      .from('table_bookings')
+      .update({ status })
+      .eq('id', id)
+      .select('*')
+      .single();
+
+    if (error) {
+      throw new Error(error.message || 'Failed to update reservation status.');
+    }
+
+    const sanitized = sanitizeTableBooking(data);
+    if (!sanitized) {
+      throw new Error(`Booking #${id} could not be found.`);
+    }
+
+    notifyBookingsUpdated();
+    return sanitized;
+  },
+
+  async deleteBooking(id: string): Promise<void> {
+    const supabase = requireSupabaseClient();
+    const { error } = await supabase
+      .from('table_bookings')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      throw new Error(error.message || 'Failed to delete reservation.');
+    }
+
+    notifyBookingsUpdated();
+  },
+};
 
 export function toLocalDateTimeInputValue(date: Date): string {
   const pad = (n: number) => String(n).padStart(2, '0');
@@ -170,70 +279,6 @@ export function formatDisplayDateTime(dateTimeStr: string): string {
     minute: '2-digit',
     hour12: true,
   });
-}
-
-export function loadMyBookingsFromStorage(): TableBooking[] {
-  try {
-    const raw = window.localStorage.getItem(BOOKINGS_STORAGE_KEY);
-    if (!raw) return [];
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed
-      .map(sanitizeTableBooking)
-      .filter((item): item is TableBooking => item !== null)
-      .sort(
-        (a, b) =>
-          (new Date(b.bookedAt).getTime() || 0) -
-          (new Date(a.bookedAt).getTime() || 0),
-      );
-  } catch {
-    return [];
-  }
-}
-
-export function saveMyBookingsToStorage(bookings: TableBooking[]): void {
-  try {
-    window.localStorage.setItem(BOOKINGS_STORAGE_KEY, JSON.stringify(bookings));
-    notifyBookingsUpdated();
-  } catch {
-    // Graceful fallback if storage quota or privacy mode restricts writes
-  }
-}
-
-export function appendMyBookingToStorage(booking: TableBooking): TableBooking[] {
-  const existing = loadMyBookingsFromStorage();
-  const deduped = existing.filter((item) => item.id !== booking.id);
-  const updated = [booking, ...deduped];
-  saveMyBookingsToStorage(updated);
-  return updated;
-}
-
-export function updateMyBookingStatusInStorage(
-  id: string,
-  status: BookingStatus,
-): TableBooking | null {
-  const existing = loadMyBookingsFromStorage();
-  let updatedBooking: TableBooking | null = null;
-  const nextList = existing.map((item) => {
-    if (item.id !== id) return item;
-    updatedBooking = {
-      ...item,
-      status,
-      updatedAt: new Date().toISOString(),
-    };
-    return updatedBooking;
-  });
-  if (updatedBooking) {
-    saveMyBookingsToStorage(nextList);
-  }
-  return updatedBooking;
-}
-
-export function removeMyBookingFromStorage(id: string): TableBooking[] {
-  const existing = loadMyBookingsFromStorage();
-  const updated = existing.filter((item) => item.id !== id);
-  saveMyBookingsToStorage(updated);
-  return updated;
 }
 
 export function buildWhatsAppBookingUrl(booking: {

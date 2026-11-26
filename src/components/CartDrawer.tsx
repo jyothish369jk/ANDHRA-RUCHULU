@@ -13,7 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import type { CartItem, OrderFulfillmentType } from '../types/restaurant';
-import { localOrdersService } from '../services/dataService';
+import { ordersService } from '../services/dataService';
 import { OWNER_WHATSAPP_NUMBER } from '../utils/reservationsStorage';
 import { FoodImage } from './InteractivePrimitives';
 
@@ -189,59 +189,21 @@ export function CartDrawer({
     };
 
     try {
-      const response = await fetch('/api/orders', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          customerName: customerName.trim(),
-          customerPhone: cleanPhone,
-          fulfillmentType,
-          deliveryAddress: deliveryAddress.trim(),
-          items: items.map((entry) => ({
-            itemId: entry.item.id,
-            quantity: entry.quantity,
-            spicePreference: entry.spicePreference,
-            portionStyle: entry.portionStyle,
-            notes: entry.notes,
-          })),
-        }),
-      });
-
-      const contentType = response.headers.get('content-type') || '';
-      if (response.status === 404 || !contentType.includes('application/json')) {
-        const localSaved = localOrdersService.createOrder({
-          customerName,
-          customerPhone: cleanPhone,
-          fulfillmentType,
-          deliveryAddress,
-          cartItems: items,
-        });
-        finalizeSuccess(localSaved.id, localSaved.totalAmountInr);
-        return;
-      }
-
-      const data = (await response.json()) as {
-        order?: { id: string; totalAmountInr: number };
-        error?: string;
-      };
-
-      if (!response.ok || !data.order) {
-        setErrors({
-          submit: data.error || 'Could not submit order. Please try again.',
-        });
-        return;
-      }
-
-      finalizeSuccess(data.order.id, data.order.totalAmountInr);
-    } catch {
-      const localSaved = localOrdersService.createOrder({
+      const createdOrder = await ordersService.createOrder({
         customerName,
         customerPhone: cleanPhone,
         fulfillmentType,
         deliveryAddress,
         cartItems: items,
       });
-      finalizeSuccess(localSaved.id, localSaved.totalAmountInr);
+      finalizeSuccess(createdOrder.id, createdOrder.totalAmountInr);
+    } catch (err) {
+      const message =
+        err instanceof Error
+          ? err.message
+          : 'Could not submit order. Please try again.';
+      setErrors({ submit: message });
+      onShowToast('Order Failed', message);
     } finally {
       setIsSubmitting(false);
     }
