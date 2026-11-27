@@ -9,6 +9,10 @@ import { CheckCircle2, X } from 'lucide-react';
 import { AmbientSpiceCanvas } from './components/AmbientSpiceCanvas';
 import { CartDrawer } from './components/CartDrawer';
 import { ContactSection } from './components/ContactSection';
+import {
+  CulinaryConciergeSection,
+  type PairingCourseOrder,
+} from './components/CulinaryConciergeSection';
 import { CustomizeModal } from './components/CustomizeModal';
 import { Footer } from './components/Footer';
 import { HeroSection } from './components/HeroSection';
@@ -208,6 +212,40 @@ export default function App() {
     [addDishToCart],
   );
 
+  const handleAddPairingToCart = useCallback(
+    (courses: PairingCourseOrder[], moodTitle: string, totalInr: number) => {
+      setCartItems((prev) => {
+        let next = [...prev];
+        for (const course of courses) {
+          const cartKey = `${course.dish.id}__${course.spicePreference}__${course.portionStyle}__`;
+          const existingIdx = next.findIndex((item) => item.cartKey === cartKey);
+          if (existingIdx !== -1) {
+            next[existingIdx] = {
+              ...next[existingIdx],
+              quantity: next[existingIdx].quantity + course.quantity,
+            };
+          } else {
+            next.push({
+              cartKey,
+              item: course.dish,
+              quantity: course.quantity,
+              spicePreference: course.spicePreference,
+              portionStyle: course.portionStyle,
+              unitPriceInr: course.dish.priceInr,
+            });
+          }
+        }
+        return next;
+      });
+      setCartOpen(true);
+      showToast(
+        'Chef Pairing Added to Cart',
+        `${moodTitle} · ₹${totalInr.toLocaleString('en-IN')}`,
+      );
+    },
+    [showToast],
+  );
+
   const handleUpdateQty = useCallback((cartKey: string, delta: number) => {
     setCartItems((prev) =>
       prev
@@ -321,6 +359,9 @@ export default function App() {
               <HeroSection
                 onExploreMenu={() => scrollToSection('menu')}
                 onBookTable={() => scrollToSection('contact')}
+              />
+              <CulinaryConciergeSection
+                onAddPairingToCart={handleAddPairingToCart}
               />
               <MenuSection
                 onQuickAdd={handleQuickAdd}

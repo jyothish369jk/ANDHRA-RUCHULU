@@ -1,8 +1,8 @@
-import { requireSupabaseClient } from '../lib/supabase';
 import type {
   AggregatorAnalyticsEntry,
   AggregatorEntryInput,
   AggregatorPlatform,
+  AggregatorSettlementStatus,
   CartItem,
   CustomerOrder,
   OrderFulfillmentType,
@@ -10,8 +10,13 @@ import type {
   OrderStatus,
 } from '../types/restaurant';
 
-export const LOCAL_VERCEL_SESSION_TOKEN = 'ar_local_vercel_session';
+export const LOCAL_ADMIN_SESSION_TOKEN = 'ar_local_admin_session';
 export const ORDERS_UPDATED_EVENT = 'ar-orders-updated';
+export const CUSTOMER_ORDERS_STORAGE_KEY = 'andhra_ruchulu_customer_orders_v1';
+export const AGGREGATOR_ENTRIES_STORAGE_KEY =
+  'andhra_ruchulu_delivery_analytics_v1';
+
+const DEFAULT_ADMIN_PIN = '5588';
 
 const VALID_ORDER_STATUSES: OrderStatus[] = [
   'New',
@@ -20,6 +25,14 @@ const VALID_ORDER_STATUSES: OrderStatus[] = [
   'Delivered',
   'Cancelled',
 ];
+
+let inMemoryOrdersFallback: CustomerOrder[] = [];
+let inMemoryAggregatorsFallback: AggregatorAnalyticsEntry[] | null = null;
+
+function generateLocalId(prefix: string): string {
+  const randomSuffix = Math.floor(100 + Math.random() * 900);
+  return `${prefix}-${Date.now().toString(36).toUpperCase()}${randomSuffix}`;
+}
 
 export function sanitizeCustomerOrder(raw: unknown): CustomerOrder | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -34,7 +47,9 @@ export function sanitizeCustomerOrder(raw: unknown): CustomerOrder | null {
 
   const rawPhone = obj.phone_number ?? obj.customerPhone;
   const customerPhone =
-    typeof rawPhone === 'string' ? rawPhone.trim() : String(rawPhone ?? '').trim();
+    typeof rawPhone === 'string'
+      ? rawPhone.trim()
+      : String(rawPhone ?? '').trim();
 
   let parsedRawItems: unknown[] = [];
   if (Array.isArray(obj.items)) {
@@ -94,7 +109,8 @@ export function sanitizeCustomerOrder(raw: unknown): CustomerOrder | null {
             ? entry.notes.trim()
             : undefined,
         fulfillmentType:
-          entry.fulfillmentType === 'Pickup' || entry.fulfillmentType === 'Delivery'
+          entry.fulfillmentType === 'Pickup' ||
+          entry.fulfillmentType === 'Delivery'
             ? entry.fulfillmentType
             : undefined,
         deliveryAddress:
@@ -161,6 +177,46 @@ export function sanitizeCustomerOrder(raw: unknown): CustomerOrder | null {
   };
 }
 
+function computeDefaultBreakdown(
+  platform: AggregatorPlatform,
+  grossSalesInr: number,
+  deductionsInr: number,
+  orders: number,
+): {
+  commissionInr: number;
+  gstInr: number;
+  packagingInr: number;
+  adsDiscountInr: number;
+} {
+  if (deductionsInr <= 0 || grossSalesInr <= 0) {
+    return {
+      commissionInr: 0,
+      gstInr: 0,
+      packagingInr: 0,
+      adsDiscountInr: 0,
+    };
+  }
+  const baseCommissionRate = platform === 'Zomato' ? 0.175 : 0.182;
+  const rawCommission = Math.round(grossSalesInr * baseCommissionRate);
+  const commissionInr = Math.min(
+    Math.round(deductionsInr * 0.78),
+    Math.max(0, rawCommission),
+  );
+  const gstInr = Math.min(
+    Math.max(0, deductionsInr - commissionInr),
+    Math.round(commissionInr * 0.18),
+  );
+  const remainder = Math.max(0, deductionsInr - commissionInr - gstInr);
+  const packagingInr = Math.min(remainder, Math.round(orders * 14));
+  const adsDiscountInr = Math.max(0, remainder - packagingInr);
+  return {
+    commissionInr,
+    gstInr,
+    packagingInr,
+    adsDiscountInr,
+  };
+}
+
 export function sanitizeAggregatorEntry(
   raw: unknown,
 ): AggregatorAnalyticsEntry | null {
@@ -187,6 +243,11 @@ export function sanitizeAggregatorEntry(
     ? Math.max(0, Math.round(Number(rawOrders)))
     : 0;
 
+  const rawCancelled = obj.cancelled_orders ?? obj.cancelledOrders;
+  const cancelledOrders = Number.isFinite(Number(rawCancelled))
+    ? Math.max(0, Math.round(Number(rawCancelled)))
+    : 0;
+
   const rawGross = obj.gross_sales ?? obj.grossSalesInr;
   const grossSalesInr = Number.isFinite(Number(rawGross))
     ? Math.max(0, Math.round(Number(rawGross)))
@@ -197,10 +258,38 @@ export function sanitizeAggregatorEntry(
     ? Math.max(0, Math.round(Number(rawDeductions)))
     : 0;
 
+  const fallbackBreakdown = computeDefaultBreakdown(
+    platform,
+    grossSalesInr,
+    deductionsInr,
+    orders,
+  );
+
+  const commissionInr = Number.isFinite(Number(obj.commissionInr))
+    ? Math.max(0, Math.round(Number(obj.commissionInr)))
+    : fallbackBreakdown.commissionInr;
+  const gstInr = Number.isFinite(Number(obj.gstInr))
+    ? Math.max(0, Math.round(Number(obj.gstInr)))
+    : fallbackBreakdown.gstInr;
+  const packagingInr = Number.isFinite(Number(obj.packagingInr))
+    ? Math.max(0, Math.round(Number(obj.packagingInr)))
+    : fallbackBreakdown.packagingInr;
+  const adsDiscountInr = Number.isFinite(Number(obj.adsDiscountInr))
+    ? Math.max(0, Math.round(Number(obj.adsDiscountInr)))
+    : fallbackBreakdown.adsDiscountInr;
+
   const rawNet = obj.net_payout ?? obj.netPayoutInr;
   const netPayoutInr = Number.isFinite(Number(rawNet))
     ? Math.round(Number(rawNet))
     : grossSalesInr - deductionsInr;
+
+  const rawStatus = String(obj.settlementStatus ?? '')
+    .trim()
+    .toLowerCase();
+  const settlementStatus: AggregatorSettlementStatus =
+    rawStatus === 'processing' || rawStatus === 'pending'
+      ? 'Processing'
+      : 'Settled';
 
   const source =
     obj.source === 'CSV' || obj.source === 'Seeded' || obj.source === 'Manual'
@@ -215,9 +304,19 @@ export function sanitizeAggregatorEntry(
     platform,
     date: rawDate,
     orders,
+    cancelledOrders,
     grossSalesInr,
     deductionsInr,
+    commissionInr,
+    gstInr,
+    packagingInr,
+    adsDiscountInr,
     netPayoutInr,
+    settlementStatus,
+    orderId:
+      typeof obj.orderId === 'string' && obj.orderId.trim()
+        ? obj.orderId.trim()
+        : undefined,
     source,
     notes:
       typeof obj.notes === 'string' && obj.notes.trim()
@@ -238,13 +337,89 @@ function notifyOrdersUpdated(): void {
   }
 }
 
+function readOrdersStorage(): CustomerOrder[] {
+  try {
+    const raw = window.localStorage.getItem(CUSTOMER_ORDERS_STORAGE_KEY);
+    if (!raw) return [...inMemoryOrdersFallback];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
+      .map(sanitizeCustomerOrder)
+      .filter((ord): ord is CustomerOrder => ord !== null)
+      .sort(
+        (a, b) =>
+          (new Date(b.createdAt).getTime() || 0) -
+          (new Date(a.createdAt).getTime() || 0),
+      );
+  } catch {
+    return [...inMemoryOrdersFallback];
+  }
+}
+
+function writeOrdersStorage(orders: CustomerOrder[]): void {
+  inMemoryOrdersFallback = [...orders];
+  try {
+    window.localStorage.setItem(
+      CUSTOMER_ORDERS_STORAGE_KEY,
+      JSON.stringify(orders),
+    );
+  } catch {
+    // Fallback remains in memory if storage quota/privacy blocks localStorage
+  }
+}
+
+function readAggregatorsStorage(): AggregatorAnalyticsEntry[] {
+  try {
+    const raw = window.localStorage.getItem(AGGREGATOR_ENTRIES_STORAGE_KEY);
+    if (raw === null) {
+      const seeded =
+        inMemoryAggregatorsFallback ?? buildSeededAggregatorEntries();
+      writeAggregatorsStorage(seeded);
+      return seeded;
+    }
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const sanitized = parsed
+      .map(sanitizeAggregatorEntry)
+      .filter((item): item is AggregatorAnalyticsEntry => item !== null)
+      .sort((a, b) => b.date.localeCompare(a.date));
+
+    // Upgrade legacy 7-day seeded datasets cleanly while keeping user-added Manual/CSV rows
+    const seededRows = sanitized.filter((item) => item.source === 'Seeded');
+    if (seededRows.length > 0 && seededRows.length < 30) {
+      const userRows = sanitized.filter((item) => item.source !== 'Seeded');
+      const freshSeed = buildSeededAggregatorEntries();
+      const upgraded = [...userRows, ...freshSeed].sort((a, b) =>
+        b.date.localeCompare(a.date),
+      );
+      writeAggregatorsStorage(upgraded);
+      return upgraded;
+    }
+
+    inMemoryAggregatorsFallback = sanitized;
+    return sanitized;
+  } catch {
+    if (inMemoryAggregatorsFallback === null) {
+      inMemoryAggregatorsFallback = buildSeededAggregatorEntries();
+    }
+    return [...inMemoryAggregatorsFallback];
+  }
+}
+
+function writeAggregatorsStorage(entries: AggregatorAnalyticsEntry[]): void {
+  inMemoryAggregatorsFallback = [...entries];
+  try {
+    window.localStorage.setItem(
+      AGGREGATOR_ENTRIES_STORAGE_KEY,
+      JSON.stringify(entries),
+    );
+  } catch {
+    // Fallback remains in memory if localStorage is unavailable
+  }
+}
+
 export function getExpectedAdminPin(): string {
-  const envPin =
-    typeof import.meta !== 'undefined' && import.meta.env
-      ? import.meta.env.VITE_ADMIN_PIN
-      : undefined;
-  const cleaned = String(envPin ?? '').trim();
-  return cleaned || '5588';
+  return DEFAULT_ADMIN_PIN;
 }
 
 export interface ParsedCsvResult {
@@ -263,23 +438,7 @@ function formatIsoDate(date: Date): string {
 export function buildSeededAggregatorEntries(
   referenceDate: Date = new Date(),
 ): AggregatorAnalyticsEntry[] {
-  const dailyPatterns: Array<{
-    zomatoOrders: number;
-    zomatoGross: number;
-    zomatoDedPct: number;
-    swiggyOrders: number;
-    swiggyGross: number;
-    swiggyDedPct: number;
-  }> = [
-    { zomatoOrders: 28, zomatoGross: 21450, zomatoDedPct: 0.22, swiggyOrders: 24, swiggyGross: 18320, swiggyDedPct: 0.23 },
-    { zomatoOrders: 31, zomatoGross: 23890, zomatoDedPct: 0.22, swiggyOrders: 26, swiggyGross: 19950, swiggyDedPct: 0.23 },
-    { zomatoOrders: 25, zomatoGross: 18940, zomatoDedPct: 0.21, swiggyOrders: 29, swiggyGross: 22180, swiggyDedPct: 0.22 },
-    { zomatoOrders: 34, zomatoGross: 26420, zomatoDedPct: 0.22, swiggyOrders: 30, swiggyGross: 23400, swiggyDedPct: 0.23 },
-    { zomatoOrders: 42, zomatoGross: 33680, zomatoDedPct: 0.23, swiggyOrders: 37, swiggyGross: 29450, swiggyDedPct: 0.23 },
-    { zomatoOrders: 48, zomatoGross: 38920, zomatoDedPct: 0.23, swiggyOrders: 44, swiggyGross: 35600, swiggyDedPct: 0.24 },
-    { zomatoOrders: 39, zomatoGross: 31150, zomatoDedPct: 0.22, swiggyOrders: 35, swiggyGross: 27840, swiggyDedPct: 0.23 },
-  ];
-
+  const TOTAL_DAYS = 60;
   const entries: AggregatorAnalyticsEntry[] = [];
   const baseDate = new Date(
     referenceDate.getFullYear(),
@@ -287,26 +446,62 @@ export function buildSeededAggregatorEntries(
     referenceDate.getDate(),
   );
 
-  dailyPatterns.forEach((day, idx) => {
-    const offsetDays = dailyPatterns.length - 1 - idx;
+  // Day-of-week demand multipliers (0 = Sun ... 6 = Sat)
+  const dowMultiplier = [1.34, 0.86, 0.91, 0.96, 1.04, 1.24, 1.41];
+
+  for (let offset = TOTAL_DAYS - 1; offset >= 0; offset -= 1) {
     const d = new Date(baseDate);
-    d.setDate(baseDate.getDate() - offsetDays);
+    d.setDate(baseDate.getDate() - offset);
     const dateStr = formatIsoDate(d);
     const timestamp = `${dateStr}T22:30:00.000Z`;
+    const dow = d.getDay();
+    const wave = Math.sin((TOTAL_DAYS - offset) * 0.45) * 0.06;
+    const growthFactor = 1 + ((TOTAL_DAYS - 1 - offset) / TOTAL_DAYS) * 0.14;
+    const dayScale = (dowMultiplier[dow] ?? 1) * (1 + wave) * growthFactor;
 
-    const zDed = Math.round(day.zomatoGross * day.zomatoDedPct);
-    const sDed = Math.round(day.swiggyGross * day.swiggyDedPct);
+    const zOrders = Math.max(18, Math.round(28 * dayScale + ((offset * 3) % 5)));
+    const sOrders = Math.max(16, Math.round(25 * dayScale + ((offset * 5) % 4)));
+
+    const zAov = 765 + ((offset * 17) % 65);
+    const sAov = 748 + ((offset * 19) % 58);
+
+    const zGross = Math.round(zOrders * zAov);
+    const sGross = Math.round(sOrders * sAov);
+
+    const zCommission = Math.round(zGross * 0.175);
+    const zGst = Math.round(zCommission * 0.18);
+    const zPackaging = Math.round(zOrders * 15);
+    const zAds = offset % 3 === 0 ? Math.round(zGross * 0.021) : Math.round(zGross * 0.012);
+    const zDed = zCommission + zGst + zPackaging + zAds;
+
+    const sCommission = Math.round(sGross * 0.182);
+    const sGst = Math.round(sCommission * 0.18);
+    const sPackaging = Math.round(sOrders * 14);
+    const sAds = offset % 2 === 0 ? Math.round(sGross * 0.019) : Math.round(sGross * 0.011);
+    const sDed = sCommission + sGst + sPackaging + sAds;
+
+    const zCancelled = dow === 0 || dow === 6 ? 2 : offset % 4 === 0 ? 1 : 0;
+    const sCancelled = dow === 6 ? 2 : offset % 3 === 0 ? 1 : 0;
+
+    const status: AggregatorSettlementStatus =
+      offset <= 1 ? 'Processing' : 'Settled';
 
     entries.push({
       id: `seed-zomato-${dateStr}`,
       platform: 'Zomato',
       date: dateStr,
-      orders: day.zomatoOrders,
-      grossSalesInr: day.zomatoGross,
+      orders: zOrders,
+      cancelledOrders: zCancelled,
+      grossSalesInr: zGross,
       deductionsInr: zDed,
-      netPayoutInr: day.zomatoGross - zDed,
+      commissionInr: zCommission,
+      gstInr: zGst,
+      packagingInr: zPackaging,
+      adsDiscountInr: zAds,
+      netPayoutInr: zGross - zDed,
+      settlementStatus: status,
       source: 'Seeded',
-      notes: 'Daily Zomato settlement',
+      notes: dow === 0 || dow === 6 ? 'Weekend peak service' : 'Daily Zomato settlement',
       createdAt: timestamp,
       updatedAt: timestamp,
     });
@@ -315,16 +510,22 @@ export function buildSeededAggregatorEntries(
       id: `seed-swiggy-${dateStr}`,
       platform: 'Swiggy',
       date: dateStr,
-      orders: day.swiggyOrders,
-      grossSalesInr: day.swiggyGross,
+      orders: sOrders,
+      cancelledOrders: sCancelled,
+      grossSalesInr: sGross,
       deductionsInr: sDed,
-      netPayoutInr: day.swiggyGross - sDed,
+      commissionInr: sCommission,
+      gstInr: sGst,
+      packagingInr: sPackaging,
+      adsDiscountInr: sAds,
+      netPayoutInr: sGross - sDed,
+      settlementStatus: status,
       source: 'Seeded',
-      notes: 'Daily Swiggy settlement',
+      notes: dow === 0 || dow === 6 ? 'Weekend peak service' : 'Daily Swiggy settlement',
       createdAt: timestamp,
       updatedAt: timestamp,
     });
-  });
+  }
 
   return entries.sort((a, b) => b.date.localeCompare(a.date));
 }
@@ -428,9 +629,10 @@ function normalizePlatformName(
 }
 
 export const SAMPLE_AGGREGATOR_CSV = [
-  'Platform,Date,Orders,Gross Sales,Deductions',
-  `Zomato,${formatIsoDate(new Date())},49,39400,8668`,
-  `Swiggy,${formatIsoDate(new Date())},43,34150,7854`,
+  'Date,Platform,Order_ID,Gross_Amount,Commission,GST,Net_Payout,Status',
+  `${formatIsoDate(new Date())},Zomato,ZMT-98412,1840,322,58,1460,Settled`,
+  `${formatIsoDate(new Date())},Swiggy,SWG-64109,1520,277,50,1193,Settled`,
+  `${formatIsoDate(new Date())},Zomato,ZMT-98485,2260,396,71,1793,Processing`,
 ].join('\n');
 
 export function parseSampleFriendlyCsv(csvText: string): ParsedCsvResult {
@@ -454,19 +656,30 @@ export function parseSampleFriendlyCsv(csvText: string): ParsedCsvResult {
     headers.findIndex((h) => candidates.some((c) => h.includes(c)));
 
   const platformIdx = findCol(['platform', 'aggregator', 'channel', 'partner']);
-  const dateIdx = findCol(['date', 'day', 'settlement']);
-  const ordersIdx = findCol(['order', 'count', 'qty']);
-  const grossIdx = findCol(['gross', 'sales', 'revenue', 'total']);
-  const deductionsIdx = findCol(['deduction', 'commission', 'fee', 'discount']);
+  const dateIdx = findCol(['date', 'day']);
+  const orderIdIdx = findCol(['order_id', 'order id', 'orderid', 'txn', 'reference']);
+  const ordersIdx = headers.findIndex(
+    (h) =>
+      (h === 'orders' ||
+        h === 'orders_count' ||
+        h.includes('count') ||
+        h.includes('qty')) &&
+      !h.includes('id'),
+  );
+  const grossIdx = findCol(['gross', 'sales', 'revenue', 'amount', 'total']);
+  const commissionIdx = findCol(['commission', 'comm']);
+  const gstIdx = findCol(['gst', 'tax']);
+  const deductionsIdx = findCol(['deduction', 'fee', 'discount']);
   const netIdx = findCol(['net', 'payout', 'settled']);
+  const statusIdx = findCol(['status', 'state']);
   const notesIdx = findCol(['note', 'remark', 'comment']);
 
-  if (dateIdx === -1 || ordersIdx === -1 || grossIdx === -1) {
+  if (dateIdx === -1 || grossIdx === -1 || (ordersIdx === -1 && orderIdIdx === -1)) {
     return {
       entries: [],
       skippedRows: lines.length - 1,
       errors: [
-        'Missing required columns. Expected headers such as Platform, Date, Orders, Gross Sales, Deductions.',
+        'Missing required columns. Expected Partner CSV (Date, Platform, Order_ID, Gross_Amount, Commission, GST, Net_Payout, Status) or Summary CSV (Platform, Date, Orders, Gross Sales, Deductions).',
       ],
     };
   }
@@ -491,18 +704,41 @@ export function parseSampleFriendlyCsv(csvText: string): ParsedCsvResult {
       }
     }
 
-    const orders = parseNumericCurrency(cols[ordersIdx]);
+    const orderId =
+      orderIdIdx !== -1 && cols[orderIdIdx]?.trim()
+        ? cols[orderIdIdx].trim()
+        : undefined;
+    const orders =
+      ordersIdx !== -1
+        ? parseNumericCurrency(cols[ordersIdx])
+        : orderId
+          ? 1
+          : 1;
     const grossSalesInr = parseNumericCurrency(cols[grossIdx]);
 
-    let deductionsInr =
+    const commissionVal =
+      commissionIdx !== -1 ? parseNumericCurrency(cols[commissionIdx]) : NaN;
+    const gstVal = gstIdx !== -1 ? parseNumericCurrency(cols[gstIdx]) : NaN;
+    const explicitDed =
       deductionsIdx !== -1 ? parseNumericCurrency(cols[deductionsIdx]) : NaN;
     const parsedNet = netIdx !== -1 ? parseNumericCurrency(cols[netIdx]) : NaN;
 
-    if (Number.isNaN(deductionsInr)) {
-      deductionsInr = !Number.isNaN(parsedNet)
-        ? Math.max(0, grossSalesInr - parsedNet)
-        : 0;
+    let deductionsInr = 0;
+    if (!Number.isNaN(explicitDed)) {
+      deductionsInr = explicitDed;
+    } else if (!Number.isNaN(commissionVal) || !Number.isNaN(gstVal)) {
+      deductionsInr =
+        (Number.isNaN(commissionVal) ? 0 : commissionVal) +
+        (Number.isNaN(gstVal) ? 0 : gstVal);
+    } else if (!Number.isNaN(parsedNet) && !Number.isNaN(grossSalesInr)) {
+      deductionsInr = Math.max(0, grossSalesInr - parsedNet);
     }
+
+    const rawStatus = statusIdx !== -1 ? (cols[statusIdx] || '').trim().toLowerCase() : '';
+    const settlementStatus: AggregatorSettlementStatus =
+      rawStatus.includes('process') || rawStatus.includes('pend')
+        ? 'Processing'
+        : 'Settled';
 
     if (
       !platform ||
@@ -515,7 +751,7 @@ export function parseSampleFriendlyCsv(csvText: string): ParsedCsvResult {
       skippedRows += 1;
       if (errors.length < 4) {
         errors.push(
-          `Row ${rowIdx + 1}: Invalid platform, date, orders, or gross sales.`,
+          `Row ${rowIdx + 1}: Invalid platform, date, orders, or gross amount.`,
         );
       }
       continue;
@@ -527,39 +763,26 @@ export function parseSampleFriendlyCsv(csvText: string): ParsedCsvResult {
       orders,
       grossSalesInr,
       deductionsInr: Math.max(0, deductionsInr),
+      commissionInr: !Number.isNaN(commissionVal) ? Math.max(0, commissionVal) : undefined,
+      gstInr: !Number.isNaN(gstVal) ? Math.max(0, gstVal) : undefined,
+      settlementStatus,
+      orderId,
       source: 'CSV',
-      notes: notesIdx !== -1 ? cols[notesIdx] || undefined : undefined,
+      notes:
+        notesIdx !== -1 && cols[notesIdx]
+          ? cols[notesIdx]
+          : orderId
+            ? `Order ${orderId}`
+            : undefined,
     });
   }
 
   return { entries, skippedRows, errors };
 }
 
-export class UnauthorizedAggregatorError extends Error {
-  constructor() {
-    super('Unauthorized Access');
-    this.name = 'UnauthorizedAggregatorError';
-  }
-}
-
 export const ordersService = {
   async listOrders(): Promise<CustomerOrder[]> {
-    const supabase = requireSupabaseClient();
-    const { data, error } = await supabase.from('customer_orders').select('*');
-
-    if (error) {
-      throw new Error(error.message || 'Failed to load customer orders.');
-    }
-
-    const rows = Array.isArray(data) ? data : [];
-    return rows
-      .map(sanitizeCustomerOrder)
-      .filter((ord): ord is CustomerOrder => ord !== null)
-      .sort(
-        (a, b) =>
-          (new Date(b.createdAt).getTime() || 0) -
-          (new Date(a.createdAt).getTime() || 0),
-      );
+    return readOrdersStorage();
   },
 
   async createOrder(params: {
@@ -569,13 +792,12 @@ export const ordersService = {
     deliveryAddress: string;
     cartItems: CartItem[];
   }): Promise<CustomerOrder> {
-    const supabase = requireSupabaseClient();
     const resolvedAddress =
       params.fulfillmentType === 'Delivery'
         ? params.deliveryAddress.trim()
         : params.deliveryAddress.trim() || 'Madhuravada Flagship Pickup / Dine-in';
 
-    const lineItems: OrderLineItem[] = params.cartItems.map((entry, idx) => ({
+    const lineItems: OrderLineItem[] = params.cartItems.map((entry) => ({
       itemId: entry.item.id,
       name: entry.item.name,
       quantity: entry.quantity,
@@ -584,12 +806,8 @@ export const ordersService = {
       unitPriceInr: entry.unitPriceInr,
       lineTotalInr: entry.unitPriceInr * entry.quantity,
       notes: entry.notes,
-      ...(idx === 0
-        ? {
-            fulfillmentType: params.fulfillmentType,
-            deliveryAddress: resolvedAddress,
-          }
-        : {}),
+      fulfillmentType: params.fulfillmentType,
+      deliveryAddress: resolvedAddress,
     }));
 
     const subtotalInr = lineItems.reduce(
@@ -598,209 +816,201 @@ export const ordersService = {
     );
     const taxesInr = Math.round(subtotalInr * 0.05);
     const totalAmountInr = subtotalInr + taxesInr;
+    const nowIso = new Date().toISOString();
 
-    const { data, error } = await supabase
-      .from('customer_orders')
-      .insert({
-        customer_name: params.customerName.trim(),
-        phone_number: params.customerPhone.replace(/\D/g, '').slice(-10),
-        items: lineItems,
-        total_amount: totalAmountInr,
-        status: 'New',
-      })
-      .select('*')
-      .single();
+    const created: CustomerOrder = {
+      id: `AR-${Date.now().toString().slice(-4)}${Math.floor(10 + Math.random() * 90)}`,
+      customerName: params.customerName.trim(),
+      customerPhone: params.customerPhone.replace(/\D/g, '').slice(-10),
+      fulfillmentType: params.fulfillmentType,
+      deliveryAddress: resolvedAddress,
+      items: lineItems,
+      subtotalInr,
+      taxesInr,
+      totalAmountInr,
+      status: 'New',
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
 
-    if (error) {
-      throw new Error(error.message || 'Failed to submit customer order.');
-    }
-
-    const sanitized = sanitizeCustomerOrder(data);
-    if (!sanitized) {
-      throw new Error('Unexpected order response from database.');
-    }
-
+    const existing = readOrdersStorage();
+    writeOrdersStorage([created, ...existing]);
     notifyOrdersUpdated();
-    return sanitized;
+    return created;
   },
 
   async updateOrderStatus(
     orderId: string,
     nextStatus: OrderStatus,
   ): Promise<CustomerOrder> {
-    const supabase = requireSupabaseClient();
-    const { data, error } = await supabase
-      .from('customer_orders')
-      .update({ status: nextStatus })
-      .eq('id', orderId)
-      .select('*')
-      .single();
-
-    if (error) {
-      throw new Error(error.message || 'Failed to update order status.');
-    }
-
-    const sanitized = sanitizeCustomerOrder(data);
-    if (!sanitized) {
+    const existing = readOrdersStorage();
+    const targetIdx = existing.findIndex((o) => o.id === orderId);
+    if (targetIdx === -1) {
       throw new Error(`Order #${orderId} could not be found.`);
     }
 
+    const updated: CustomerOrder = {
+      ...existing[targetIdx],
+      status: nextStatus,
+      updatedAt: new Date().toISOString(),
+    };
+    const nextList = existing.map((o) => (o.id === orderId ? updated : o));
+    writeOrdersStorage(nextList);
     notifyOrdersUpdated();
-    return sanitized;
+    return updated;
   },
 
   async deleteOrder(orderId: string): Promise<void> {
-    const supabase = requireSupabaseClient();
-    const { error } = await supabase
-      .from('customer_orders')
-      .delete()
-      .eq('id', orderId);
-
-    if (error) {
-      throw new Error(error.message || 'Failed to delete customer order.');
-    }
-
+    const existing = readOrdersStorage();
+    const filtered = existing.filter((o) => o.id !== orderId);
+    writeOrdersStorage(filtered);
     notifyOrdersUpdated();
   },
 };
 
 export const dataService = {
-  async listAggregatorEntries(
-    _token?: string,
-  ): Promise<AggregatorAnalyticsEntry[]> {
-    const supabase = requireSupabaseClient();
-    const { data, error } = await supabase
-      .from('delivery_analytics')
-      .select('*')
-      .order('date', { ascending: false });
-
-    if (error) {
-      throw new Error(
-        error.message || 'Failed to load Zomato & Swiggy analytics.',
-      );
-    }
-
-    const rows = Array.isArray(data) ? data : [];
-    return rows
-      .map(sanitizeAggregatorEntry)
-      .filter((item): item is AggregatorAnalyticsEntry => item !== null)
-      .sort((a, b) => b.date.localeCompare(a.date));
+  async listAggregatorEntries(): Promise<AggregatorAnalyticsEntry[]> {
+    return readAggregatorsStorage();
   },
 
   async createAggregatorEntry(
-    _token: string,
     payload: AggregatorEntryInput,
   ): Promise<AggregatorAnalyticsEntry> {
-    const supabase = requireSupabaseClient();
+    const orders = Math.max(0, Math.round(payload.orders));
     const gross = Math.max(0, Math.round(payload.grossSalesInr));
     const ded = Math.max(0, Math.round(payload.deductionsInr));
-    const net = gross - ded;
+    const breakdown = computeDefaultBreakdown(
+      payload.platform,
+      gross,
+      ded,
+      orders,
+    );
+    const nowIso = new Date().toISOString();
 
-    const { data, error } = await supabase
-      .from('delivery_analytics')
-      .insert({
-        platform: payload.platform,
-        date: payload.date,
-        orders_count: Math.max(0, Math.round(payload.orders)),
-        gross_sales: gross,
-        deductions: ded,
-        net_payout: net,
-      })
-      .select('*')
-      .single();
+    const created: AggregatorAnalyticsEntry = {
+      id: generateLocalId('agg'),
+      platform: payload.platform,
+      date: payload.date,
+      orders,
+      cancelledOrders: Math.max(0, Math.round(payload.cancelledOrders ?? 0)),
+      grossSalesInr: gross,
+      deductionsInr: ded,
+      commissionInr: payload.commissionInr ?? breakdown.commissionInr,
+      gstInr: payload.gstInr ?? breakdown.gstInr,
+      packagingInr: payload.packagingInr ?? breakdown.packagingInr,
+      adsDiscountInr: payload.adsDiscountInr ?? breakdown.adsDiscountInr,
+      netPayoutInr: gross - ded,
+      settlementStatus: payload.settlementStatus ?? 'Settled',
+      orderId: payload.orderId?.trim() || undefined,
+      source: payload.source || 'Manual',
+      notes: payload.notes?.trim() || undefined,
+      createdAt: nowIso,
+      updatedAt: nowIso,
+    };
 
-    if (error) {
-      throw new Error(error.message || 'Failed to log aggregator orders.');
-    }
-
-    const sanitized = sanitizeAggregatorEntry(data);
-    if (!sanitized) {
-      throw new Error('Unexpected analytics response from database.');
-    }
-    return sanitized;
+    const existing = readAggregatorsStorage();
+    const nextList = [created, ...existing].sort((a, b) =>
+      b.date.localeCompare(a.date),
+    );
+    writeAggregatorsStorage(nextList);
+    return created;
   },
 
   async importAggregatorEntries(
-    _token: string,
     rows: AggregatorEntryInput[],
   ): Promise<AggregatorAnalyticsEntry[]> {
-    const supabase = requireSupabaseClient();
-    const insertRows = rows.map((row) => {
+    const nowIso = new Date().toISOString();
+    const createdRows: AggregatorAnalyticsEntry[] = rows.map((row, idx) => {
+      const orders = Math.max(0, Math.round(row.orders));
       const gross = Math.max(0, Math.round(row.grossSalesInr));
       const ded = Math.max(0, Math.round(row.deductionsInr));
+      const breakdown = computeDefaultBreakdown(row.platform, gross, ded, orders);
       return {
+        id: `${generateLocalId('csv')}-${idx}`,
         platform: row.platform,
         date: row.date,
-        orders_count: Math.max(0, Math.round(row.orders)),
-        gross_sales: gross,
-        deductions: ded,
-        net_payout: gross - ded,
+        orders,
+        cancelledOrders: Math.max(0, Math.round(row.cancelledOrders ?? 0)),
+        grossSalesInr: gross,
+        deductionsInr: ded,
+        commissionInr: row.commissionInr ?? breakdown.commissionInr,
+        gstInr: row.gstInr ?? breakdown.gstInr,
+        packagingInr: row.packagingInr ?? breakdown.packagingInr,
+        adsDiscountInr: row.adsDiscountInr ?? breakdown.adsDiscountInr,
+        netPayoutInr: gross - ded,
+        settlementStatus: row.settlementStatus ?? 'Settled',
+        orderId: row.orderId?.trim() || undefined,
+        source: 'CSV',
+        notes: row.notes?.trim() || undefined,
+        createdAt: nowIso,
+        updatedAt: nowIso,
       };
     });
 
-    const { data, error } = await supabase
-      .from('delivery_analytics')
-      .insert(insertRows)
-      .select('*');
-
-    if (error) {
-      throw new Error(error.message || 'Failed to import CSV rows.');
-    }
-
-    const inserted = Array.isArray(data) ? data : [];
-    return inserted
-      .map((item): AggregatorAnalyticsEntry | null => {
-        const sanitized = sanitizeAggregatorEntry(item);
-        return sanitized ? { ...sanitized, source: 'CSV' } : null;
-      })
-      .filter((item): item is AggregatorAnalyticsEntry => item !== null);
+    const existing = readAggregatorsStorage();
+    const merged = [...createdRows, ...existing].sort((a, b) =>
+      b.date.localeCompare(a.date),
+    );
+    writeAggregatorsStorage(merged);
+    return createdRows;
   },
 
   async updateAggregatorEntry(
-    _token: string,
     id: string,
     payload: AggregatorEntryInput,
   ): Promise<AggregatorAnalyticsEntry> {
-    const supabase = requireSupabaseClient();
-    const gross = Math.max(0, Math.round(payload.grossSalesInr));
-    const ded = Math.max(0, Math.round(payload.deductionsInr));
-    const net = gross - ded;
-
-    const { data, error } = await supabase
-      .from('delivery_analytics')
-      .update({
-        platform: payload.platform,
-        date: payload.date,
-        orders_count: Math.max(0, Math.round(payload.orders)),
-        gross_sales: gross,
-        deductions: ded,
-        net_payout: net,
-      })
-      .eq('id', id)
-      .select('*')
-      .single();
-
-    if (error) {
-      throw new Error(error.message || 'Failed to update analytics entry.');
-    }
-
-    const sanitized = sanitizeAggregatorEntry(data);
-    if (!sanitized) {
+    const existing = readAggregatorsStorage();
+    const targetIdx = existing.findIndex((item) => item.id === id);
+    if (targetIdx === -1) {
       throw new Error('Analytics entry not found.');
     }
-    return sanitized;
+
+    const orders = Math.max(0, Math.round(payload.orders));
+    const gross = Math.max(0, Math.round(payload.grossSalesInr));
+    const ded = Math.max(0, Math.round(payload.deductionsInr));
+    const breakdown = computeDefaultBreakdown(
+      payload.platform,
+      gross,
+      ded,
+      orders,
+    );
+    const updated: AggregatorAnalyticsEntry = {
+      ...existing[targetIdx],
+      platform: payload.platform,
+      date: payload.date,
+      orders,
+      cancelledOrders:
+        payload.cancelledOrders !== undefined
+          ? Math.max(0, Math.round(payload.cancelledOrders))
+          : existing[targetIdx].cancelledOrders ?? 0,
+      grossSalesInr: gross,
+      deductionsInr: ded,
+      commissionInr: payload.commissionInr ?? breakdown.commissionInr,
+      gstInr: payload.gstInr ?? breakdown.gstInr,
+      packagingInr: payload.packagingInr ?? breakdown.packagingInr,
+      adsDiscountInr: payload.adsDiscountInr ?? breakdown.adsDiscountInr,
+      netPayoutInr: gross - ded,
+      settlementStatus:
+        payload.settlementStatus ??
+        existing[targetIdx].settlementStatus ??
+        'Settled',
+      orderId: payload.orderId?.trim() || existing[targetIdx].orderId,
+      source: payload.source || existing[targetIdx].source,
+      notes: payload.notes?.trim() || undefined,
+      updatedAt: new Date().toISOString(),
+    };
+
+    const nextList = existing
+      .map((item) => (item.id === id ? updated : item))
+      .sort((a, b) => b.date.localeCompare(a.date));
+    writeAggregatorsStorage(nextList);
+    return updated;
   },
 
-  async deleteAggregatorEntry(_token: string, id: string): Promise<void> {
-    const supabase = requireSupabaseClient();
-    const { error } = await supabase
-      .from('delivery_analytics')
-      .delete()
-      .eq('id', id);
-
-    if (error) {
-      throw new Error(error.message || 'Failed to delete analytics entry.');
-    }
+  async deleteAggregatorEntry(id: string): Promise<void> {
+    const existing = readAggregatorsStorage();
+    const filtered = existing.filter((item) => item.id !== id);
+    writeAggregatorsStorage(filtered);
   },
 
   parseCsv: parseSampleFriendlyCsv,

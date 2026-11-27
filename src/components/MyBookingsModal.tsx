@@ -277,7 +277,7 @@ export function MyBookingsModal({
                                   setConfirmingRemoveId(null);
                                   onShowToast(
                                     'Booking Deleted',
-                                    'Removed reservation from table_bookings.',
+                                    'Removed reservation from your bookings.',
                                   );
                                 }}
                                 className="min-h-[38px] flex-1 cursor-pointer rounded-lg bg-[#DC2626] px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-[#EF4444]"

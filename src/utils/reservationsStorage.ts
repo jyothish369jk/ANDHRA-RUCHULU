@@ -1,4 +1,3 @@
-import { requireSupabaseClient } from '../lib/supabase';
 import type {
   BookingStatus,
   ReservationOccasion,
@@ -7,6 +6,7 @@ import type {
 
 export const OWNER_WHATSAPP_NUMBER = '919381228257';
 export const BOOKINGS_UPDATED_EVENT = 'ar-bookings-updated';
+export const TABLE_BOOKINGS_STORAGE_KEY = 'andhra_ruchulu_table_bookings_v1';
 
 const VALID_OCCASIONS: ReservationOccasion[] = [
   'Birthday',
@@ -25,6 +25,8 @@ const VALID_BOOKING_STATUSES: BookingStatus[] = [
   'Completed',
   'Cancelled',
 ];
+
+let inMemoryBookingsFallback: TableBooking[] = [];
 
 export function sanitizeTableBooking(raw: unknown): TableBooking | null {
   if (!raw || typeof raw !== 'object') return null;
@@ -93,20 +95,13 @@ function notifyBookingsUpdated(): void {
   }
 }
 
-export const bookingsService = {
-  async listBookings(): Promise<TableBooking[]> {
-    const supabase = requireSupabaseClient();
-    const { data, error } = await supabase
-      .from('table_bookings')
-      .select('*')
-      .order('booking_time', { ascending: false });
-
-    if (error) {
-      throw new Error(error.message || 'Failed to load table reservations.');
-    }
-
-    const rows = Array.isArray(data) ? data : [];
-    return rows
+function readBookingsStorage(): TableBooking[] {
+  try {
+    const raw = window.localStorage.getItem(TABLE_BOOKINGS_STORAGE_KEY);
+    if (!raw) return [...inMemoryBookingsFallback];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed
       .map(sanitizeTableBooking)
       .filter((item): item is TableBooking => item !== null)
       .sort(
@@ -114,6 +109,26 @@ export const bookingsService = {
           (new Date(b.bookedAt || b.dateTime).getTime() || 0) -
           (new Date(a.bookedAt || a.dateTime).getTime() || 0),
       );
+  } catch {
+    return [...inMemoryBookingsFallback];
+  }
+}
+
+function writeBookingsStorage(bookings: TableBooking[]): void {
+  inMemoryBookingsFallback = [...bookings];
+  try {
+    window.localStorage.setItem(
+      TABLE_BOOKINGS_STORAGE_KEY,
+      JSON.stringify(bookings),
+    );
+  } catch {
+    // Fallback remains in memory if localStorage is blocked
+  }
+}
+
+export const bookingsService = {
+  async listBookings(): Promise<TableBooking[]> {
+    return readBookingsStorage();
   },
 
   async createBooking(input: {
@@ -123,74 +138,56 @@ export const bookingsService = {
     guests: number;
     dateTime: string;
   }): Promise<TableBooking> {
-    const supabase = requireSupabaseClient();
     const parsedTime = new Date(input.dateTime);
     const bookingTimeIso = Number.isNaN(parsedTime.getTime())
       ? input.dateTime
       : parsedTime.toISOString();
+    const nowIso = new Date().toISOString();
 
-    const { data, error } = await supabase
-      .from('table_bookings')
-      .insert({
-        customer_name: input.name.trim(),
-        phone_number: input.phone.trim(),
-        occasion: input.occasion,
-        guests: Math.max(1, Math.round(input.guests)),
-        booking_time: bookingTimeIso,
-        status: 'Pending',
-      })
-      .select('*')
-      .single();
+    const created: TableBooking = {
+      id: `AR-${Date.now().toString().slice(-5)}${Math.floor(10 + Math.random() * 90)}`,
+      name: input.name.trim(),
+      phone: input.phone.trim(),
+      occasion: input.occasion,
+      guests: Math.max(1, Math.round(input.guests)),
+      dateTime: bookingTimeIso,
+      bookedAt: nowIso,
+      status: 'Pending',
+      locationName: 'Madhuravada Flagship',
+      updatedAt: nowIso,
+    };
 
-    if (error) {
-      throw new Error(error.message || 'Failed to save table reservation.');
-    }
-
-    const sanitized = sanitizeTableBooking(data);
-    if (!sanitized) {
-      throw new Error('Unexpected reservation response from database.');
-    }
-
+    const existing = readBookingsStorage();
+    writeBookingsStorage([created, ...existing]);
     notifyBookingsUpdated();
-    return sanitized;
+    return created;
   },
 
   async updateBookingStatus(
     id: string,
     status: BookingStatus,
   ): Promise<TableBooking> {
-    const supabase = requireSupabaseClient();
-    const { data, error } = await supabase
-      .from('table_bookings')
-      .update({ status })
-      .eq('id', id)
-      .select('*')
-      .single();
-
-    if (error) {
-      throw new Error(error.message || 'Failed to update reservation status.');
-    }
-
-    const sanitized = sanitizeTableBooking(data);
-    if (!sanitized) {
+    const existing = readBookingsStorage();
+    const targetIdx = existing.findIndex((b) => b.id === id);
+    if (targetIdx === -1) {
       throw new Error(`Booking #${id} could not be found.`);
     }
 
+    const updated: TableBooking = {
+      ...existing[targetIdx],
+      status,
+      updatedAt: new Date().toISOString(),
+    };
+    const nextList = existing.map((b) => (b.id === id ? updated : b));
+    writeBookingsStorage(nextList);
     notifyBookingsUpdated();
-    return sanitized;
+    return updated;
   },
 
   async deleteBooking(id: string): Promise<void> {
-    const supabase = requireSupabaseClient();
-    const { error } = await supabase
-      .from('table_bookings')
-      .delete()
-      .eq('id', id);
-
-    if (error) {
-      throw new Error(error.message || 'Failed to delete reservation.');
-    }
-
+    const existing = readBookingsStorage();
+    const filtered = existing.filter((b) => b.id !== id);
+    writeBookingsStorage(filtered);
     notifyBookingsUpdated();
   },
 };

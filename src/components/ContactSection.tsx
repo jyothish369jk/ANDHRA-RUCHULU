@@ -157,7 +157,7 @@ export function ContactSection({
       setConfirmedState({ booking: bookingWithLocation, whatsappUrl });
       onShowToast(
         'Saved to My Bookings',
-        'Your table reservation was saved to Supabase and redirected to WhatsApp.',
+        'Your table reservation was saved locally and redirected to WhatsApp.',
       );
     } catch (err) {
       const message =

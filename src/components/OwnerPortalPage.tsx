@@ -33,8 +33,9 @@ import type {
   TableBooking,
 } from '../types/restaurant';
 import {
+  CUSTOMER_ORDERS_STORAGE_KEY,
   getExpectedAdminPin,
-  LOCAL_VERCEL_SESSION_TOKEN,
+  LOCAL_ADMIN_SESSION_TOKEN,
   ORDERS_UPDATED_EVENT,
   ordersService,
 } from '../services/dataService';
@@ -42,8 +43,8 @@ import {
   BOOKINGS_UPDATED_EVENT,
   bookingsService,
   formatDisplayDateTime,
+  TABLE_BOOKINGS_STORAGE_KEY,
 } from '../utils/reservationsStorage';
-import { supabase } from '../lib/supabase';
 import { AggregatorAnalyticsTab } from './AggregatorAnalyticsTab';
 import { BrandEmblem } from './InteractivePrimitives';
 
@@ -190,7 +191,7 @@ export function OwnerPortalPage({
       const isAuthed =
         window.sessionStorage.getItem(ADMIN_AUTH_FLAG_KEY) === 'true';
       if (token) return token;
-      return isAuthed ? LOCAL_VERCEL_SESSION_TOKEN : null;
+      return isAuthed ? LOCAL_ADMIN_SESSION_TOKEN : null;
     } catch {
       return null;
     }
@@ -363,7 +364,7 @@ export function OwnerPortalPage({
     [onShowToast],
   );
 
-  // Re-verify persisted sessionStorage token on mount
+  // Restore persisted local session on mount
   useEffect(() => {
     if (!sessionToken) {
       setIsVerifyingSession(false);
@@ -373,87 +374,13 @@ export function OwnerPortalPage({
     let cancelled = false;
     (async () => {
       try {
-        if (sessionToken === LOCAL_VERCEL_SESSION_TOKEN) {
-          if (cancelled) return;
-          setVerifiedEmail(AUTHORIZED_OWNER_EMAIL);
-          await Promise.all([
-            fetchOwnerOrders(LOCAL_VERCEL_SESSION_TOKEN, true),
-            fetchOwnerBookings(LOCAL_VERCEL_SESSION_TOKEN, true),
-          ]);
-          return;
-        }
-
-        const res = await fetch('/api/admin/session', {
-          headers: { Authorization: `Bearer ${sessionToken}` },
-        });
-        if (cancelled) return;
-
-        if (res.status === 401) {
-          clearSession();
-          return;
-        }
-
-        const contentType = res.headers.get('content-type') || '';
-        if (res.status === 404 || !contentType.includes('application/json')) {
-          let hasAuthFlag = false;
-          try {
-            hasAuthFlag =
-              window.sessionStorage.getItem(ADMIN_AUTH_FLAG_KEY) === 'true';
-          } catch {
-            hasAuthFlag = false;
-          }
-          if (hasAuthFlag) {
-            setSessionToken(LOCAL_VERCEL_SESSION_TOKEN);
-            setVerifiedEmail(AUTHORIZED_OWNER_EMAIL);
-            await Promise.all([
-              fetchOwnerOrders(LOCAL_VERCEL_SESSION_TOKEN, true),
-              fetchOwnerBookings(LOCAL_VERCEL_SESSION_TOKEN, true),
-            ]);
-          } else {
-            clearSession();
-          }
-          return;
-        }
-
-        const sessionData = (await res.json()) as {
-          authenticated?: boolean;
-          email?: string;
-        };
-        if (
-          !res.ok ||
-          !sessionData.authenticated ||
-          sessionData.email?.trim().toLowerCase() !== AUTHORIZED_OWNER_EMAIL
-        ) {
-          clearSession();
-        } else {
-          try {
-            window.sessionStorage.setItem(ADMIN_AUTH_FLAG_KEY, 'true');
-          } catch {
-            // Ignore storage failures
-          }
-          setVerifiedEmail(AUTHORIZED_OWNER_EMAIL);
-          await Promise.all([
-            fetchOwnerOrders(sessionToken, true),
-            fetchOwnerBookings(sessionToken, true),
-          ]);
-        }
+        setVerifiedEmail(AUTHORIZED_OWNER_EMAIL);
+        await Promise.all([
+          fetchOwnerOrders(sessionToken, true),
+          fetchOwnerBookings(sessionToken, true),
+        ]);
       } catch {
-        if (cancelled) return;
-        let hasAuthFlag = false;
-        try {
-          hasAuthFlag =
-            window.sessionStorage.getItem(ADMIN_AUTH_FLAG_KEY) === 'true';
-        } catch {
-          hasAuthFlag = false;
-        }
-        if (hasAuthFlag) {
-          setSessionToken(LOCAL_VERCEL_SESSION_TOKEN);
-          setVerifiedEmail(AUTHORIZED_OWNER_EMAIL);
-          await Promise.all([
-            fetchOwnerOrders(LOCAL_VERCEL_SESSION_TOKEN, true),
-            fetchOwnerBookings(LOCAL_VERCEL_SESSION_TOKEN, true),
-          ]);
-        } else {
+        if (!cancelled) {
           clearSession();
         }
       } finally {
@@ -466,7 +393,7 @@ export function OwnerPortalPage({
     };
   }, [sessionToken, clearSession, fetchOwnerOrders, fetchOwnerBookings]);
 
-  // Keep Admin Portal synced with live Supabase updates & local events
+  // Keep Admin Portal synced with local events and cross-tab localStorage updates
   useEffect(() => {
     if (!sessionToken || verifiedEmail !== AUTHORIZED_OWNER_EMAIL) return;
 
@@ -476,51 +403,37 @@ export function OwnerPortalPage({
     const handleBookingsUpdated = () => {
       void fetchOwnerBookings(sessionToken, true);
     };
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.key === CUSTOMER_ORDERS_STORAGE_KEY) {
+        void fetchOwnerOrders(sessionToken, true);
+      } else if (event.key === TABLE_BOOKINGS_STORAGE_KEY) {
+        void fetchOwnerBookings(sessionToken, true);
+      }
+    };
 
     window.addEventListener(ORDERS_UPDATED_EVENT, handleOrdersUpdated);
     window.addEventListener(BOOKINGS_UPDATED_EVENT, handleBookingsUpdated);
-
-    const channel = supabase
-      ? supabase
-          .channel('admin-portal-live-sync')
-          .on(
-            'postgres_changes',
-            { event: '*', schema: 'public', table: 'customer_orders' },
-            () => {
-              void fetchOwnerOrders(sessionToken, true);
-            },
-          )
-          .on(
-            'postgres_changes',
-            { event: '*', schema: 'public', table: 'table_bookings' },
-            () => {
-              void fetchOwnerBookings(sessionToken, true);
-            },
-          )
-          .subscribe()
-      : null;
+    window.addEventListener('storage', handleStorageChange);
 
     return () => {
       window.removeEventListener(ORDERS_UPDATED_EVENT, handleOrdersUpdated);
       window.removeEventListener(BOOKINGS_UPDATED_EVENT, handleBookingsUpdated);
-      if (channel && supabase) {
-        void supabase.removeChannel(channel);
-      }
+      window.removeEventListener('storage', handleStorageChange);
     };
   }, [sessionToken, verifiedEmail, fetchOwnerOrders, fetchOwnerBookings]);
 
-  const unlockLocalVercelSession = useCallback(() => {
+  const unlockLocalAdminSession = useCallback(() => {
     try {
       window.sessionStorage.setItem(
         OWNER_SESSION_KEY,
-        LOCAL_VERCEL_SESSION_TOKEN,
+        LOCAL_ADMIN_SESSION_TOKEN,
       );
       window.sessionStorage.setItem(ADMIN_AUTH_FLAG_KEY, 'true');
     } catch {
       // Continue with in-memory unlock even if sessionStorage is restricted
     }
     setVerifiedEmail(AUTHORIZED_OWNER_EMAIL);
-    setSessionToken(LOCAL_VERCEL_SESSION_TOKEN);
+    setSessionToken(LOCAL_ADMIN_SESSION_TOKEN);
     setPinInput('');
     onShowToast(
       'Admin Portal Unlocked',
@@ -541,70 +454,14 @@ export function OwnerPortalPage({
       return;
     }
 
-    const expectedFallbackPin = getExpectedAdminPin();
+    const expectedPin = getExpectedAdminPin();
     const matchesClientPin =
-      normalizedPasskey === expectedFallbackPin || normalizedPasskey === '5588';
+      normalizedPasskey === expectedPin || normalizedPasskey === '5588';
 
     setIsLoggingIn(true);
     try {
-      const response = await fetch('/api/admin/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          pin: normalizedPasskey,
-        }),
-      });
-
-      const contentType = response.headers.get('content-type') || '';
-      if (response.status === 404 || !contentType.includes('application/json')) {
-        if (matchesClientPin) {
-          unlockLocalVercelSession();
-        } else {
-          setLoginError(
-            'Incorrect passkey. Please enter the valid 4-digit passkey.',
-          );
-        }
-        return;
-      }
-
-      if (response.status >= 500 && matchesClientPin) {
-        unlockLocalVercelSession();
-        return;
-      }
-
-      const data = (await response.json()) as {
-        token?: string;
-        owner?: { email?: string };
-        error?: string;
-      };
-      if (
-        !response.ok ||
-        !data.token ||
-        data.owner?.email?.trim().toLowerCase() !== AUTHORIZED_OWNER_EMAIL
-      ) {
-        setLoginError(
-          data.error ||
-            'Incorrect passkey. Please enter the valid 4-digit passkey.',
-        );
-        return;
-      }
-
-      try {
-        window.sessionStorage.setItem(OWNER_SESSION_KEY, data.token);
-        window.sessionStorage.setItem(ADMIN_AUTH_FLAG_KEY, 'true');
-      } catch {
-        // Fallback to in-memory token if sessionStorage blocked
-      }
-      setVerifiedEmail(AUTHORIZED_OWNER_EMAIL);
-      setSessionToken(data.token);
-      setPinInput('');
-      onShowToast(
-        'Admin Portal Unlocked',
-        'Welcome back to Andhra Ruchulu Order Desk.',
-      );
-    } catch {
       if (matchesClientPin) {
-        unlockLocalVercelSession();
+        unlockLocalAdminSession();
       } else {
         setLoginError(
           'Incorrect passkey. Please enter the valid 4-digit passkey.',
@@ -615,23 +472,12 @@ export function OwnerPortalPage({
     }
   };
 
-  const handleLogout = async () => {
-    const activeToken = sessionToken;
+  const handleLogout = () => {
     clearSession();
-    if (activeToken && activeToken !== LOCAL_VERCEL_SESSION_TOKEN) {
-      try {
-        await fetch('/api/admin/logout', {
-          method: 'POST',
-          headers: { Authorization: `Bearer ${activeToken}` },
-        });
-      } catch {
-        // Ignore network errors during logout
-      }
-    }
     onShowToast('Logged Out', 'Your owner admin session has been closed.');
   };
 
-  // Order CRUD Handlers (Supabase customer_orders)
+  // Order CRUD Handlers (localStorage)
   const handleOrderStatusChange = async (
     orderId: string,
     nextStatus: OrderStatus,
@@ -652,7 +498,7 @@ export function OwnerPortalPage({
         'Update Failed',
         err instanceof Error
           ? err.message
-          : 'Could not update order status in Supabase.',
+          : 'Could not update order status.',
       );
     } finally {
       setUpdatingOrderId(null);
@@ -672,14 +518,14 @@ export function OwnerPortalPage({
         'Delete Failed',
         err instanceof Error
           ? err.message
-          : 'Could not delete order from Supabase.',
+          : 'Could not delete order.',
       );
     } finally {
       setDeletingOrderId(null);
     }
   };
 
-  // Booking CRUD Handlers (Supabase table_bookings)
+  // Booking CRUD Handlers (localStorage)
   const handleBookingStatusChange = async (
     bookingId: string,
     nextStatus: BookingStatus,
@@ -703,7 +549,7 @@ export function OwnerPortalPage({
         'Update Failed',
         err instanceof Error
           ? err.message
-          : 'Could not update reservation status in Supabase.',
+          : 'Could not update reservation status.',
       );
     } finally {
       setUpdatingBookingId(null);
@@ -723,14 +569,14 @@ export function OwnerPortalPage({
         'Delete Failed',
         err instanceof Error
           ? err.message
-          : 'Could not delete reservation from Supabase.',
+          : 'Could not delete reservation.',
       );
     } finally {
       setDeletingBookingId(null);
     }
   };
 
-  // Derived Summaries (always synchronized with live Supabase rows)
+  // Derived Summaries (always synchronized with local bookings & orders)
   const orderSummary = useMemo(
     () => ({
       totalOrders: orders.length,
@@ -1106,9 +952,7 @@ export function OwnerPortalPage({
 
         {activeAdminTab === 'analytics' ? (
           <AggregatorAnalyticsTab
-            sessionToken={sessionToken}
             refreshKey={analyticsRefreshKey}
-            onUnauthorized={clearSession}
             onShowToast={onShowToast}
           />
         ) : activeAdminTab === 'bookings' ? (

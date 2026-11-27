@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'motion/react';
 import {
   CheckCircle2,
+  ExternalLink,
   Loader2,
   MapPin,
   MessageCircle,
@@ -16,6 +17,9 @@ import type { CartItem, OrderFulfillmentType } from '../types/restaurant';
 import { ordersService } from '../services/dataService';
 import { OWNER_WHATSAPP_NUMBER } from '../utils/reservationsStorage';
 import { FoodImage } from './InteractivePrimitives';
+
+const SWIGGY_URL = 'https://www.swiggy.com';
+const ZOMATO_URL = 'https://www.zomato.com';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -366,10 +370,12 @@ export function CartDrawer({
                     ))}
                   </ul>
 
-                  {/* Customer Order Details */}
+                  {/* Fulfillment Toggle & Pickup Guest Details */}
                   <div className="space-y-3 border-t border-white/10 pt-4">
                     <p className="text-xs font-semibold tracking-wide text-[#F59E0B]">
-                      Guest &amp; Fulfillment Details
+                      {fulfillmentType === 'Pickup'
+                        ? 'Guest & Pickup Details'
+                        : 'Order Fulfillment'}
                     </p>
 
                     <div
@@ -381,7 +387,7 @@ export function CartDrawer({
                         type="button"
                         onClick={() => {
                           setFulfillmentType('Delivery');
-                          setErrors((prev) => ({ ...prev, deliveryAddress: undefined }));
+                          setErrors({});
                         }}
                         className={`inline-flex min-h-[38px] cursor-pointer items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold transition-colors ${
                           fulfillmentType === 'Delivery'
@@ -410,110 +416,106 @@ export function CartDrawer({
                       </button>
                     </div>
 
-                    <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                      <div>
-                        <label
-                          htmlFor="cart-name"
-                          className="block text-[11px] font-medium text-[#94A3B8]"
-                        >
-                          Your Name *
-                        </label>
-                        <input
-                          id="cart-name"
-                          name="customerName"
-                          type="text"
-                          autoComplete="name"
-                          value={customerName}
-                          onChange={(e) => {
-                            setCustomerName(e.target.value);
-                            if (errors.customerName) {
-                              setErrors((prev) => ({ ...prev, customerName: undefined }));
-                            }
-                          }}
-                          placeholder="Ananya Rao"
-                          className="glass-input mt-1 h-10 w-full rounded-xl px-3 text-xs text-[#F8FAFC] placeholder:text-[#94A3B8]/45"
-                        />
-                        {errors.customerName && (
-                          <p className="mt-1 text-[11px] text-[#DC2626]">
-                            {errors.customerName}
+                    {fulfillmentType === 'Pickup' && (
+                      <>
+                        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                          <div>
+                            <label
+                              htmlFor="cart-name"
+                              className="block text-[11px] font-medium text-[#94A3B8]"
+                            >
+                              Your Name *
+                            </label>
+                            <input
+                              id="cart-name"
+                              name="customerName"
+                              type="text"
+                              autoComplete="name"
+                              value={customerName}
+                              onChange={(e) => {
+                                setCustomerName(e.target.value);
+                                if (errors.customerName) {
+                                  setErrors((prev) => ({ ...prev, customerName: undefined }));
+                                }
+                              }}
+                              placeholder="Ananya Rao"
+                              className="glass-input mt-1 h-10 w-full rounded-xl px-3 text-xs text-[#F8FAFC] placeholder:text-[#94A3B8]/45"
+                            />
+                            {errors.customerName && (
+                              <p className="mt-1 text-[11px] text-[#DC2626]">
+                                {errors.customerName}
+                              </p>
+                            )}
+                          </div>
+
+                          <div>
+                            <label
+                              htmlFor="cart-phone"
+                              className="block text-[11px] font-medium text-[#94A3B8]"
+                            >
+                              Phone (10 digits) *
+                            </label>
+                            <input
+                              id="cart-phone"
+                              name="customerPhone"
+                              type="tel"
+                              inputMode="numeric"
+                              autoComplete="tel"
+                              maxLength={16}
+                              value={customerPhone}
+                              onChange={(e) => {
+                                const digits = normalizePhoneDigits(e.target.value);
+                                setCustomerPhone(digits);
+                                if (errors.customerPhone) {
+                                  setErrors((prev) => ({ ...prev, customerPhone: undefined }));
+                                }
+                              }}
+                              placeholder="9849000000"
+                              className="glass-input mt-1 h-10 w-full rounded-xl px-3 text-xs text-[#F8FAFC] tabular-nums placeholder:text-[#94A3B8]/45"
+                            />
+                            {errors.customerPhone && (
+                              <p className="mt-1 text-[11px] text-[#DC2626]">
+                                {errors.customerPhone}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+
+                        <div>
+                          <label
+                            htmlFor="cart-address"
+                            className="block text-[11px] font-medium text-[#94A3B8]"
+                          >
+                            Pickup Time / Table Note (Optional)
+                          </label>
+                          <textarea
+                            id="cart-address"
+                            name="deliveryAddress"
+                            autoComplete="off"
+                            rows={2}
+                            value={deliveryAddress}
+                            onChange={(e) => {
+                              setDeliveryAddress(e.target.value);
+                              if (errors.deliveryAddress) {
+                                setErrors((prev) => ({ ...prev, deliveryAddress: undefined }));
+                              }
+                            }}
+                            placeholder="Picking up at 8:00 PM at Madhuravada flagship"
+                            className="glass-input mt-1 w-full rounded-xl px-3 py-2 text-xs text-[#F8FAFC] placeholder:text-[#94A3B8]/45"
+                          />
+                          {errors.deliveryAddress && (
+                            <p className="mt-1 text-[11px] text-[#DC2626]">
+                              {errors.deliveryAddress}
+                            </p>
+                          )}
+                        </div>
+
+                        {errors.submit && (
+                          <p role="alert" className="text-xs font-medium text-[#DC2626]">
+                            {errors.submit}
                           </p>
                         )}
-                      </div>
-
-                      <div>
-                        <label
-                          htmlFor="cart-phone"
-                          className="block text-[11px] font-medium text-[#94A3B8]"
-                        >
-                          Phone (10 digits) *
-                        </label>
-                        <input
-                          id="cart-phone"
-                          name="customerPhone"
-                          type="tel"
-                          inputMode="numeric"
-                          autoComplete="tel"
-                          maxLength={16}
-                          value={customerPhone}
-                          onChange={(e) => {
-                            const digits = normalizePhoneDigits(e.target.value);
-                            setCustomerPhone(digits);
-                            if (errors.customerPhone) {
-                              setErrors((prev) => ({ ...prev, customerPhone: undefined }));
-                            }
-                          }}
-                          placeholder="9849000000"
-                          className="glass-input mt-1 h-10 w-full rounded-xl px-3 text-xs text-[#F8FAFC] tabular-nums placeholder:text-[#94A3B8]/45"
-                        />
-                        {errors.customerPhone && (
-                          <p className="mt-1 text-[11px] text-[#DC2626]">
-                            {errors.customerPhone}
-                          </p>
-                        )}
-                      </div>
-                    </div>
-
-                    <div>
-                      <label
-                        htmlFor="cart-address"
-                        className="block text-[11px] font-medium text-[#94A3B8]"
-                      >
-                        {fulfillmentType === 'Delivery'
-                          ? 'Delivery Address *'
-                          : 'Pickup Time / Table Note (Optional)'}
-                      </label>
-                      <textarea
-                        id="cart-address"
-                        name="deliveryAddress"
-                        autoComplete={
-                          fulfillmentType === 'Delivery' ? 'street-address' : 'off'
-                        }
-                        rows={2}
-                        value={deliveryAddress}
-                        onChange={(e) => {
-                          setDeliveryAddress(e.target.value);
-                          if (errors.deliveryAddress) {
-                            setErrors((prev) => ({ ...prev, deliveryAddress: undefined }));
-                          }
-                        }}
-                        placeholder={
-                          fulfillmentType === 'Delivery'
-                            ? 'Flat 302, MVP Colony / Madhuravada, Visakhapatnam'
-                            : 'Picking up at 8:00 PM at Madhuravada flagship'
-                        }
-                        className="glass-input mt-1 w-full rounded-xl px-3 py-2 text-xs text-[#F8FAFC] placeholder:text-[#94A3B8]/45"
-                      />
-                      {errors.deliveryAddress && (
-                        <p className="mt-1 text-[11px] text-[#DC2626]">
-                          {errors.deliveryAddress}
-                        </p>
-                      )}
-                    </div>
-
-                    {errors.submit && (
-                      <p role="alert" className="text-xs font-medium text-[#DC2626]">
-                        {errors.submit}
-                      </p>
+                      </>
                     )}
                   </div>
                 </div>
@@ -538,29 +540,60 @@ export function CartDrawer({
                   </div>
                 </div>
 
-                <div className="mt-4 flex flex-col gap-2.5">
-                  <button
-                    type="button"
-                    disabled={isSubmitting}
-                    onClick={() => submitOrder(false)}
-                    className="inline-flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-[#F59E0B] px-5 py-3 text-sm font-semibold text-[#0B0C10] transition-colors hover:bg-[#FBBF24] disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isSubmitting && (
-                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                    )}
-                    <span>Confirm &amp; Place Order</span>
-                  </button>
+                {fulfillmentType === 'Pickup' ? (
+                  <div className="mt-4 flex flex-col gap-2.5">
+                    <button
+                      type="button"
+                      disabled={isSubmitting}
+                      onClick={() => submitOrder(false)}
+                      className="inline-flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-[#F59E0B] px-5 py-3 text-sm font-semibold text-[#0B0C10] transition-colors hover:bg-[#FBBF24] disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      {isSubmitting && (
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      )}
+                      <span>Confirm &amp; Place Order</span>
+                    </button>
 
-                  <button
-                    type="button"
-                    disabled={isSubmitting}
-                    onClick={() => submitOrder(true)}
-                    className="inline-flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#10B981]/35 bg-[#10B981]/10 px-5 py-2.5 text-xs font-semibold text-[#10B981] transition-colors hover:bg-[#10B981]/20 disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    <MessageCircle className="h-4 w-4" aria-hidden="true" />
-                    <span>Place Order &amp; Send on WhatsApp</span>
-                  </button>
-                </div>
+                    <button
+                      type="button"
+                      disabled={isSubmitting}
+                      onClick={() => submitOrder(true)}
+                      className="inline-flex min-h-[44px] w-full cursor-pointer items-center justify-center gap-2 rounded-xl border border-[#10B981]/35 bg-[#10B981]/10 px-5 py-2.5 text-xs font-semibold text-[#10B981] transition-colors hover:bg-[#10B981]/20 disabled:cursor-not-allowed disabled:opacity-60"
+                    >
+                      <MessageCircle className="h-4 w-4" aria-hidden="true" />
+                      <span>Place Order &amp; Send on WhatsApp</span>
+                    </button>
+                  </div>
+                ) : (
+                  <div className="mt-4 space-y-3">
+                    <p className="rounded-xl border border-white/10 bg-white/[0.03] px-3.5 py-2.5 text-xs leading-relaxed text-[#CBD5E1]">
+                      Home delivery is fulfilled through our delivery partners. Please complete your
+                      delivery order on Swiggy or Zomato.
+                    </p>
+
+                    <div className="grid grid-cols-1 gap-2.5 sm:grid-cols-2">
+                      <a
+                        href={SWIGGY_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-[#FC8019] px-4 py-2.5 text-sm font-semibold text-[#0B0C10] transition-opacity hover:opacity-90"
+                      >
+                        <span>Order on Swiggy</span>
+                        <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                      </a>
+
+                      <a
+                        href={ZOMATO_URL}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-[#E23744] px-4 py-2.5 text-sm font-semibold text-white transition-opacity hover:opacity-90"
+                      >
+                        <span>Order on Zomato</span>
+                        <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                      </a>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </motion.aside>

@@ -41,21 +41,27 @@ function GoogleMark({ className = 'h-5 w-5' }: { className?: string }) {
 function StarRow({ count = 5, animateCascade = false }: { count?: number; animateCascade?: boolean }) {
   return (
     <div className="inline-flex items-center gap-1" aria-label={`${count} out of 5 stars`}>
-      {Array.from({ length: count }).map((_, idx) => (
-        <motion.span
-          key={idx}
-          initial={animateCascade ? { opacity: 0, scale: 0.4, rotate: -18 } : false}
-          whileInView={animateCascade ? { opacity: 1, scale: 1, rotate: 0 } : undefined}
-          viewport={{ once: true, amount: 0.4 }}
-          transition={{
-            duration: 0.35,
-            delay: animateCascade ? 0.1 + idx * 0.06 : 0,
-            ease: [0.16, 1, 0.3, 1],
-          }}
-        >
-          <Star className="h-4 w-4 fill-[#F59E0B] text-[#F59E0B]" aria-hidden="true" />
-        </motion.span>
-      ))}
+      {Array.from({ length: count }).map((_, idx) =>
+        animateCascade ? (
+          <motion.span
+            key={idx}
+            initial={{ opacity: 0, scale: 0.4, rotate: -18 }}
+            whileInView={{ opacity: 1, scale: 1, rotate: 0 }}
+            viewport={{ once: true, amount: 0.4 }}
+            transition={{
+              duration: 0.35,
+              delay: 0.1 + idx * 0.06,
+              ease: [0.16, 1, 0.3, 1],
+            }}
+          >
+            <Star className="h-4 w-4 fill-[#F59E0B] text-[#F59E0B]" aria-hidden="true" />
+          </motion.span>
+        ) : (
+          <span key={idx}>
+            <Star className="h-4 w-4 fill-[#F59E0B] text-[#F59E0B]" aria-hidden="true" />
+          </span>
+        ),
+      )}
     </div>
   );
 }
@@ -68,6 +74,7 @@ export function ReviewsSection() {
   const [activeIndex, setActiveIndex] = useState(0);
   const [direction, setDirection] = useState(1);
   const [isPaused, setIsPaused] = useState(false);
+  const [isMarqueeTouchPaused, setIsMarqueeTouchPaused] = useState(false);
   const [displayRating, setDisplayRating] = useState('4.9');
 
   useEffect(() => {
@@ -287,32 +294,30 @@ export function ReviewsSection() {
         </TiltGlassCard>
       </div>
 
-      {/* Kinetic Horizontal Review Marquee */}
+      {/* GPU-Accelerated Horizontal Review Marquee */}
       <div
         onMouseEnter={() => setIsPaused(true)}
         onMouseLeave={() => setIsPaused(false)}
-        className="relative mt-6 overflow-hidden py-2 [mask-image:linear-gradient(to_right,transparent,black_6%,black_94%,transparent)]"
+        onTouchStart={() => setIsMarqueeTouchPaused(true)}
+        onTouchEnd={() => setIsMarqueeTouchPaused(false)}
+        onTouchCancel={() => setIsMarqueeTouchPaused(false)}
+        className="reviews-marquee-wrapper relative mt-6 py-2"
       >
-        <motion.div
-          className={`flex w-max gap-4 ${prefersReducedMotion ? 'flex-wrap justify-center w-full' : ''}`}
-          animate={
+        {/* Lightweight edge fade overlays (avoids mobile mask-image compositing cost) */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 left-0 z-10 w-8 bg-gradient-to-r from-[#0B0C10] to-transparent sm:w-14"
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-y-0 right-0 z-10 w-8 bg-gradient-to-l from-[#0B0C10] to-transparent sm:w-14"
+        />
+
+        <div
+          className={
             prefersReducedMotion
-              ? undefined
-              : {
-                  x: ['0%', '-50%'],
-                }
-          }
-          transition={
-            prefersReducedMotion
-              ? undefined
-              : {
-                  x: {
-                    repeat: Infinity,
-                    repeatType: 'loop',
-                    duration: 36,
-                    ease: 'linear',
-                  },
-                }
+              ? 'flex w-full flex-wrap justify-center gap-4'
+              : `reviews-marquee-track ${isMarqueeTouchPaused ? 'is-touch-paused' : ''}`
           }
         >
           {(prefersReducedMotion ? GOOGLE_REVIEWS : marqueeItems).map((rev, idx) => {
@@ -326,8 +331,10 @@ export function ReviewsSection() {
                   setDirection(realIndex >= activeIndex ? 1 : -1);
                   setActiveIndex(realIndex);
                 }}
-                className={`glass-panel w-[290px] shrink-0 cursor-pointer rounded-2xl p-4 text-left transition-all duration-200 hover:-translate-y-0.5 hover:border-[#F59E0B]/45 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F59E0B] sm:w-[320px] ${
-                  isSelected ? 'border-[#F59E0B]/50 bg-white/[0.06]' : ''
+                className={`w-[290px] shrink-0 cursor-pointer rounded-2xl border p-4 text-left transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#F59E0B] sm:w-[320px] ${
+                  isSelected
+                    ? 'border-[#F59E0B]/50 bg-[#18181D]'
+                    : 'border-white/[0.08] bg-[#121216] hover:border-[#F59E0B]/40'
                 }`}
               >
                 <div className="flex items-center justify-between gap-2">
@@ -347,7 +354,7 @@ export function ReviewsSection() {
               </button>
             );
           })}
-        </motion.div>
+        </div>
       </div>
     </section>
   );

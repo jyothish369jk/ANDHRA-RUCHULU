@@ -120,14 +120,23 @@ export type AggregatorPlatform = 'Zomato' | 'Swiggy';
 
 export type AggregatorEntrySource = 'Seeded' | 'Manual' | 'CSV';
 
+export type AggregatorSettlementStatus = 'Settled' | 'Processing';
+
 export interface AggregatorAnalyticsEntry {
   id: string;
   platform: AggregatorPlatform;
   date: string;
   orders: number;
+  cancelledOrders?: number;
   grossSalesInr: number;
   deductionsInr: number;
+  commissionInr?: number;
+  gstInr?: number;
+  packagingInr?: number;
+  adsDiscountInr?: number;
   netPayoutInr: number;
+  settlementStatus?: AggregatorSettlementStatus;
+  orderId?: string;
   source: AggregatorEntrySource;
   notes?: string;
   createdAt: string;
@@ -138,8 +147,15 @@ export interface AggregatorEntryInput {
   platform: AggregatorPlatform;
   date: string;
   orders: number;
+  cancelledOrders?: number;
   grossSalesInr: number;
   deductionsInr: number;
+  commissionInr?: number;
+  gstInr?: number;
+  packagingInr?: number;
+  adsDiscountInr?: number;
+  settlementStatus?: AggregatorSettlementStatus;
+  orderId?: string;
   source?: AggregatorEntrySource;
   notes?: string;
 }
